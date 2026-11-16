@@ -1,5 +1,5 @@
 <template>
-  <div class="flex flex-row h-full">
+  <div class="opencor-plot-theme flex flex-row h-full" :class="{ 'opencor-plot-dark-mode': !isLightMode }">
     <div v-if="showMarker" class="w-0.75 bg-primary" />
     <div ref="mainDivRef" class="plot-panel grow h-full min-w-0 relative overflow-hidden"
       :style="{
@@ -129,7 +129,7 @@
     </div>
     <ContextMenuWidget ref="contextMenuRef" :model="contextMenuItems" :appendTo="appendTo" @hide="onContextMenuHide" />
     <Teleport v-if="hover" :to="appendTo ?? 'body'">
-      <div ref="hoverTooltipRef" class="hover-tooltip">
+      <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': !isLightMode }">
         <div class="hover-tooltip-header">
           <span v-if="data.xAxisTitle" class="hover-tooltip-name" v-html="common.sanitiseHtml(data.xAxisTitle)" />
           <span class="hover-tooltip-value">{{ hover.x }}</span>
@@ -364,12 +364,13 @@ const isLightMode = vue.computed<boolean>(() => {
   return props.theme === 'light' || (systemUsesLightMode.value && props.theme !== 'dark');
 });
 
-// Our theme, which uses PrimeVue's CSS variables, so that it is consistent with the rest of OpenCOR.
-// Note: a canvas doesn't understand CSS variables, so we resolve them (see colors.cssColor()) for what gets drawn on
+// Our theme colours, which use our theme's CSS variables (see .opencor-plot-theme in our styles), so that they can be
+// customised.
+// Note: a canvas doesn't understand CSS variables, so we resolve them (see resolvedColor()) for what gets drawn on
 //       uPlot's canvas (i.e. our grid lines, zero lines, and tick labels). This is fine since we resolve them whenever
-//       our plot gets created (which it does whenever our theme changes, see updatePlot()) or drawn, and PrimeVue's CSS
-//       variables get updated as soon as our theme changes (see useTheme() in vueCommon.ts). We also resolve them for
-//       our exports (see svgDocument()) since our CSS variables are not available to them.
+//       our plot gets created (which it does whenever our theme changes, see updatePlot()) or drawn, and our CSS
+//       variables get updated as soon as our theme changes (see .opencor-plot-dark-mode in our styles). We also resolve
+//       them for our exports (see svgDocument()) since our CSS variables are not available to them.
 
 interface IThemeColors {
   background: string;
@@ -383,21 +384,24 @@ interface IThemeColors {
   hoverGuide: string;
 }
 
-const themeColors = vue.computed<IThemeColors>(() => {
-  const useLightMode = isLightMode.value;
+const themeColors: IThemeColors = {
+  background: 'var(--theme-background)',
+  text: 'var(--theme-text-color)',
+  tickLabel: 'var(--theme-muted-text-color)',
+  grid: 'var(--theme-grid-color)',
+  zeroLine: 'var(--theme-zero-line-color)',
+  zoomFill: 'color-mix(in srgb, var(--theme-primary-color) 12%, transparent)',
+  zoomStroke: 'var(--theme-primary-color)',
+  hiddenTrace: 'var(--theme-hidden-trace-color)',
+  hoverGuide: 'color-mix(in srgb, var(--theme-muted-text-color) 60%, transparent)'
+};
 
-  return {
-    background: 'var(--p-content-background)',
-    text: 'var(--p-text-color)',
-    tickLabel: 'var(--p-text-muted-color)',
-    grid: useLightMode ? 'var(--p-surface-200)' : 'var(--p-surface-800)',
-    zeroLine: useLightMode ? 'var(--p-surface-300)' : 'var(--p-surface-600)',
-    zoomFill: 'color-mix(in srgb, var(--p-primary-color) 12%, transparent)',
-    zoomStroke: 'var(--p-primary-color)',
-    hiddenTrace: useLightMode ? 'var(--p-surface-300)' : 'var(--p-surface-600)',
-    hoverGuide: 'color-mix(in srgb, var(--p-text-muted-color) 60%, transparent)'
-  };
-});
+// Resolve the given colour if it is a CSS variable, using our main div since that is where our theme's CSS variables
+// are defined (rather than on our document).
+
+const resolvedColor = (color: string): string => {
+  return colors.cssColor(color, mainDivRef.value ?? document.documentElement);
+};
 
 // Our traces' visibility, which we keep track of across data updates (e.g., while a simulation is running or when runs
 // get tracked in interactive mode).
@@ -1184,7 +1188,7 @@ const svgDocument = (scale: number = 1): ISvgDocument => {
     `<svg xmlns="http://www.w3.org/2000/svg" width="${scaledWidth}" height="${scaledHeight}" viewBox="0 0 ${scaledWidth} ${scaledHeight}">`,
     `<clipPath id="traces"><rect x="${svgNumber(left - 0.5 * traceLineWidth)}" y="${svgNumber(top - 0.5 * traceLineWidth)}" width="${svgNumber(width + traceLineWidth)}" height="${svgNumber(height + traceLineWidth)}"/></clipPath>`,
     `<clipPath id="markers"><rect x="${svgNumber(left)}" y="${svgNumber(top)}" width="${svgNumber(width)}" height="${svgNumber(height)}"/></clipPath>`,
-    `<rect width="${scaledWidth}" height="${scaledHeight}" fill="${colors.cssColor(themeColors.value.background)}"/>`
+    `<rect width="${scaledWidth}" height="${scaledHeight}" fill="${resolvedColor(themeColors.background)}"/>`
   ];
 
   // Our grid lines and zero lines, which get drawn in that order on uPlot's canvas (see drawZeroLines()).
@@ -1200,12 +1204,12 @@ const svgDocument = (scale: number = 1): ISvgDocument => {
 
     linesPath(path, xValues, yValues, area, withinPlottingArea);
 
-    return svgPathElement(path, `stroke="${colors.cssColor(color)}" stroke-width="${lineWidth(scale)}" fill="none"`);
+    return svgPathElement(path, `stroke="${resolvedColor(color)}" stroke-width="${lineWidth(scale)}" fill="none"`);
   };
 
   res.push(
-    lines(themeColors.value.grid, xSplits, ySplits, false),
-    lines(themeColors.value.zeroLine, zeroLines('x'), zeroLines('y'))
+    lines(themeColors.grid, xSplits, ySplits, false),
+    lines(themeColors.zeroLine, zeroLines('x'), zeroLines('y'))
   );
 
   // Our visible traces and their markers, if any, which uPlot draws in that order, trace by trace.
@@ -1250,7 +1254,7 @@ const svgDocument = (scale: number = 1): ISvgDocument => {
   );
 
   res.push(
-    `<g font-family="${escapeXml(fontFamily)}" font-size="${TICK_FONT_SIZE}" fill="${colors.cssColor(themeColors.value.tickLabel)}">${svgTickLabels.join('')}</g>`
+    `<g font-family="${escapeXml(fontFamily)}" font-size="${TICK_FONT_SIZE}" fill="${resolvedColor(themeColors.tickLabel)}">${svgTickLabels.join('')}</g>`
   );
 
   // Our axis titles and legend, which we render on top of our plot.
@@ -3645,7 +3649,7 @@ const drawTickLabels = (u: uPlot): void => {
   context.save();
 
   context.font = `${Math.round(TICK_FONT_SIZE * area.pxRatio)}px ${fontFamily}`;
-  context.fillStyle = colors.cssColor(themeColors.value.tickLabel);
+  context.fillStyle = resolvedColor(themeColors.tickLabel);
   context.textBaseline = 'alphabetic';
 
   for (const tickLabel of tickLabels(u, area)) {
@@ -3942,7 +3946,7 @@ const drawZeroLines = (u: uPlot): void => {
   // Like Plotly, draw our zero lines.
   // Note: this gets called after uPlot draws our grid lines and before it draws our traces.
 
-  drawLines(u, colors.cssColor(themeColors.value.zeroLine), zeroLines('x'), zeroLines('y'));
+  drawLines(u, resolvedColor(themeColors.zeroLine), zeroLines('x'), zeroLines('y'));
 };
 
 // Traces and markers.
@@ -4657,7 +4661,7 @@ const createPlot = (width: number, height: number): void => {
   // Create our plot.
 
   const axis: uPlot.Axis = {
-    stroke: colors.cssColor(themeColors.value.text),
+    stroke: resolvedColor(themeColors.text),
     font: tickFont(),
     labelFont: `${TITLE_FONT_SIZE}px ${fontFamily}`,
     labelGap: 0,
@@ -4666,7 +4670,7 @@ const createPlot = (width: number, height: number): void => {
       show: false
     },
     grid: {
-      stroke: colors.cssColor(themeColors.value.grid),
+      stroke: resolvedColor(themeColors.grid),
       width: 1
     }
   };
@@ -5048,6 +5052,58 @@ vue.watch(
 </script>
 
 <style scoped>
+  /**
+   * Our theme, which can be customised by setting our public CSS variables (i.e. --opencor-plot-*) on one of our
+   * ancestors (e.g., --opencor-plot-background). By default, our theme looks like PrimeVue's Aura theme, in both light
+   * and dark modes.
+   * Note #1: we use our theme's CSS variables (i.e. --theme-*) rather than our public ones, since the latter would
+   *          otherwise always have our default values (since they would be defined on our own elements and therefore
+   *          override those inherited from our ancestors).
+   * Note #2: our theme is applied to our root element and to our overlays (e.g., our hover tooltip), since they may be
+   *          appended elsewhere (see appendTo) and would therefore not inherit our theme.
+   */
+
+  .opencor-plot-theme {
+    --theme-background: var(--opencor-plot-background, #fff);
+    --theme-text-color: var(--opencor-plot-text-color, #334155);
+    --theme-muted-text-color: var(--opencor-plot-muted-text-color, #64748b);
+    --theme-primary-color: var(--opencor-plot-primary-color, #10b981);
+    --theme-grid-color: var(--opencor-plot-grid-color, #e2e8f0);
+    --theme-zero-line-color: var(--opencor-plot-zero-line-color, #cbd5e1);
+    --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #cbd5e1);
+    --theme-hover-background: var(--opencor-plot-hover-background, #f1f5f9);
+    --theme-overlay-background: var(--opencor-plot-overlay-background, #fff);
+    --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #e2e8f0);
+    --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #334155);
+    --theme-overlay-shadow: var(
+      --opencor-plot-overlay-shadow,
+      0 8px 24px -4px rgb(0 0 0 / 12%),
+      0 2px 6px -2px rgb(0 0 0 / 8%)
+    );
+    --theme-border-radius: var(--opencor-plot-border-radius, 4px);
+    --theme-focus-ring-width: var(--opencor-plot-focus-ring-width, 2px);
+    --theme-focus-ring-color: var(--opencor-plot-focus-ring-color, var(--theme-primary-color));
+  }
+
+  .opencor-plot-theme.opencor-plot-dark-mode {
+    --theme-background: var(--opencor-plot-background, #18181b);
+    --theme-text-color: var(--opencor-plot-text-color, #fff);
+    --theme-muted-text-color: var(--opencor-plot-muted-text-color, #a1a1aa);
+    --theme-primary-color: var(--opencor-plot-primary-color, #34d399);
+    --theme-grid-color: var(--opencor-plot-grid-color, #27272a);
+    --theme-zero-line-color: var(--opencor-plot-zero-line-color, #52525b);
+    --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #52525b);
+    --theme-hover-background: var(--opencor-plot-hover-background, #27272a);
+    --theme-overlay-background: var(--opencor-plot-overlay-background, #18181b);
+    --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #3f3f46);
+    --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #fff);
+    --theme-overlay-shadow: var(
+      --opencor-plot-overlay-shadow,
+      0 8px 24px -4px rgb(0 0 0 / 50%),
+      0 2px 6px -2px rgb(0 0 0 / 40%)
+    );
+  }
+
   .axis-title {
     position: absolute;
     line-height: 1;
@@ -5088,11 +5144,11 @@ vue.watch(
     z-index: 999;
     max-width: 320px;
     padding: 6px 10px;
-    border: 1px solid var(--p-overlay-popover-border-color);
+    border: 1px solid var(--theme-overlay-border-color);
     border-radius: 0.5rem;
-    background-color: var(--p-overlay-popover-background);
-    box-shadow: var(--opencor-overlay-shadow);
-    color: var(--p-overlay-popover-color);
+    background-color: var(--theme-overlay-background);
+    box-shadow: var(--theme-overlay-shadow);
+    color: var(--theme-overlay-text-color);
     font-size: 12px;
     line-height: 18px;
     white-space: nowrap;
@@ -5104,11 +5160,11 @@ vue.watch(
     display: flex;
     gap: 12px;
     margin-bottom: 2px;
-    color: var(--p-text-muted-color);
+    color: var(--theme-muted-text-color);
   }
 
   .hover-tooltip-header .hover-tooltip-value {
-    color: var(--p-overlay-popover-color);
+    color: var(--theme-overlay-text-color);
   }
 
   .hover-tooltip-name {
@@ -5119,7 +5175,7 @@ vue.watch(
   }
 
   .hover-tooltip-other-rows {
-    color: var(--p-text-muted-color);
+    color: var(--theme-muted-text-color);
   }
 
   .hover-tooltip-row {
@@ -5165,7 +5221,7 @@ vue.watch(
     margin: 0 4px;
     padding: 0 6px 0 30px;
     border: none;
-    border-radius: var(--p-border-radius-sm);
+    border-radius: var(--theme-border-radius);
     background-color: transparent;
     color: inherit;
     font: inherit;
@@ -5177,15 +5233,16 @@ vue.watch(
   }
 
   .legend-item:hover {
-    background-color: var(--p-content-hover-background);
+    background-color: var(--theme-hover-background);
   }
 
   .legend-item:focus-visible {
-    outline-offset: calc(-1 * var(--opencor-focus-ring-width));
+    outline: var(--theme-focus-ring-width) solid var(--theme-focus-ring-color);
+    outline-offset: calc(-1 * var(--theme-focus-ring-width));
   }
 
   .legend-item-hidden {
-    color: var(--p-text-muted-color);
+    color: var(--theme-muted-text-color);
   }
 
   .legend-marker {
@@ -5249,8 +5306,8 @@ vue.watch(
     position: absolute;
     inset: 0;
     z-index: 5;
-    outline: var(--opencor-focus-ring-width) solid var(--opencor-focus-ring-color, var(--p-primary-color));
-    outline-offset: calc(-1 * var(--opencor-focus-ring-width));
+    outline: var(--theme-focus-ring-width) solid var(--theme-focus-ring-color);
+    outline-offset: calc(-1 * var(--theme-focus-ring-width));
     pointer-events: none;
   }
 
