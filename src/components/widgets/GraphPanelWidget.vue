@@ -149,8 +149,6 @@
 </template>
 
 <script setup lang="ts">
-import * as vueusecore from '@vueuse/core';
-
 import type { MenuItem } from 'primevue/menuitem';
 import uPlot from 'uplot';
 import * as vue from 'vue';
@@ -4850,47 +4848,56 @@ const updatePlot = (): void => {
   }
 };
 
+// Size tracking of an element, which may get (re)created or removed (e.g., our legend, see its v-if), hence we watch it
+// and (re)observe it whenever it changes. Return a method to stop tracking the size of the element.
+
+const trackElementSize = (element: vue.WatchSource<HTMLElement | null>, callback: () => void): (() => void) => {
+  const resizeObserver = new ResizeObserver(() => {
+    callback();
+  });
+  const stopWatchingElement = vue.watch(
+    element,
+    (newElement: HTMLElement | null, oldElement: HTMLElement | null | undefined) => {
+      if (oldElement) {
+        resizeObserver.unobserve(oldElement);
+      }
+
+      if (newElement) {
+        resizeObserver.observe(newElement, { box: 'border-box' });
+      }
+    },
+    { immediate: true, flush: 'post' }
+  );
+
+  return () => {
+    stopWatchingElement();
+    resizeObserver.disconnect();
+  };
+};
+
 // Vue lifecycle hooks.
 
 vue.onMounted(() => {
   // Start tracking the size of our container so that we can update our plot when it changes.
-  // Note #1: we pass a getter (i.e. mainDivRef.value) rather than our ref (i.e. mainDivRef) since VueUse uses its own
-  //          version of Vue's types, which are not compatible with ours.
-  // Note #2: we resize our plot straight away rather than on the next animation frame. Indeed, a resize observer gets
-  //          notified after layout but before paint, and uPlot (and Vue) update our plot (and legend) in a microtask,
-  //          i.e. before paint too. So, our resized plot gets painted in the same frame as our resized container. This
-  //          wouldn't be the case if we were to resize our plot on the next animation frame, in which case our plot
-  //          (and legend) would be painted at their old size and position for one frame, i.e. they would flicker. Also,
-  //          there is no need to coalesce our resizes since a resize observer gets notified at most once per frame.
+  // Note: we resize our plot straight away rather than on the next animation frame. Indeed, a resize observer gets
+  //       notified after layout but before paint, and uPlot (and Vue) update our plot (and legend) in a microtask, i.e.
+  //       before paint too. So, our resized plot gets painted in the same frame as our resized container. This wouldn't
+  //       be the case if we were to resize our plot on the next animation frame, in which case our plot (and legend)
+  //       would be painted at their old size and position for one frame, i.e. they would flicker. Also, there is no
+  //       need to coalesce our resizes since a resize observer gets notified at most once per frame.
 
-  const { stop: stopContainer } = vueusecore.useResizeObserver(
-    () => mainDivRef.value,
-    () => {
-      doResize();
-    },
-    {
-      box: 'border-box'
-    }
-  );
-
-  stopTrackingContainerSize = stopContainer;
+  stopTrackingContainerSize = trackElementSize(mainDivRef, () => {
+    doResize();
+  });
 
   // Start tracking the size of our legend so that we can update the layout of our plot when its width changes since it
   // is part of our right margin.
   // Note: its width can change without our data changing, e.g., when our legend becomes scrollable (or stops being
   //       scrollable) as a result of our plot being resized, in which case it may get a (classic) scrollbar.
 
-  const { stop: stopLegend } = vueusecore.useResizeObserver(
-    () => legendRef.value,
-    () => {
-      syncLegendWidth();
-    },
-    {
-      box: 'border-box'
-    }
-  );
-
-  stopTrackingLegendSize = stopLegend;
+  stopTrackingLegendSize = trackElementSize(legendRef, () => {
+    syncLegendWidth();
+  });
 });
 
 vue.onBeforeUnmount(() => {
