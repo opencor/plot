@@ -152,13 +152,14 @@
 import * as vueusecore from '@vueuse/core';
 
 import type { MenuItem } from 'primevue/menuitem';
-import type uPlot from 'uplot';
+import uPlot from 'uplot';
 import * as vue from 'vue';
+
+import 'uplot/dist/uPlot.min.css';
 
 import * as colors from '../../common/colors';
 import * as common from '../../common/common';
 import { LONG_DELAY, NO_DELAY } from '../../common/constants';
-import * as dependencies from '../../common/dependencies';
 import * as math from '../../common/math';
 import * as vueCommon from '../../common/vueCommon';
 
@@ -519,7 +520,7 @@ const plotRect = vue.shallowRef<IPlotRect | undefined>();
 const updatePlotRect = (u: uPlot): void => {
   // Keep track of our plotting area (in CSS pixels, relative to our container).
 
-  const pxRatio = dependencies._uPlot.pxRatio as number;
+  const pxRatio = uPlot.pxRatio;
   const newPlotRect = {
     left: u.bbox.left / pxRatio,
     top: u.bbox.top / pxRatio,
@@ -1234,7 +1235,7 @@ const rasterImage = async (format: RasterImageFormat): Promise<Blob> => {
   // Rasterise our SVG document at our device pixel ratio, so that our image is as sharp as our plot (unlike Plotly,
   // which rasterises its SVG document at the size of its container).
 
-  const { svg, width, height } = svgDocument(dependencies._uPlot.pxRatio as number);
+  const { svg, width, height } = svgDocument(uPlot.pxRatio);
   const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
 
   try {
@@ -1580,7 +1581,7 @@ const autoRange = (u: uPlot, axisKey: AxisKey, min: number, max: number): Range 
 
   // Determine the extrema of our traces and of our traces with markers, each with its own padding.
 
-  const length = (axisKey === 'x' ? u.bbox.width : u.bbox.height) / (dependencies._uPlot.pxRatio as number);
+  const length = (axisKey === 'x' ? u.bbox.width : u.bbox.height) / uPlot.pxRatio;
   const padding = axisKey === 'y' ? AUTORANGE_PADDING * length : 0;
   const markersPadding = AUTORANGE_PADDING * length + MARKER_PADDING;
   const minExtrema: IExtremum[] = [{ value: min, padding }];
@@ -2463,7 +2464,7 @@ const onDragMove = (event: PointerEvent): void => {
   //       (e.g., 125%). Its border is also drawn inside our zoom box, which itself is kept within our plotting area.
 
   if (currentDrag.zoomMode) {
-    const pxRatio = dependencies._uPlot.pxRatio as number;
+    const pxRatio = uPlot.pxRatio;
     const strokeWidth = lineWidth(pxRatio);
     const left = Math.round(box.left * pxRatio);
     const top = Math.round(box.top * pxRatio);
@@ -3387,7 +3388,7 @@ const axisSplits = (axisKey: AxisKey): uPlot.Axis.Splits => {
     // Like Plotly, we aim for one tick every 80 (X axis) or 40 (Y axis) pixels with at least four and at most nine tick
     // spacings.
 
-    const length = (axisKey === 'x' ? u.bbox.width : u.bbox.height) / (dependencies._uPlot.pxRatio as number);
+    const length = (axisKey === 'x' ? u.bbox.width : u.bbox.height) / uPlot.pxRatio;
     const minSpacing = axisKey === 'x' ? TICK_MIN_X_SPACING : TICK_MIN_Y_SPACING;
     const nbOfTicks = Math.min(Math.max(length / minSpacing, 4), 9) + 1;
     const range = Math.abs(max - min);
@@ -3509,7 +3510,7 @@ const axisValues = (axisKey: AxisKey): uPlot.Axis.Values => {
 
     const label =
       axisTicks[axisKey]?.label ?? ((split: number): string => formatNumber(split, { tickRound: 0, exponent: 0 }));
-    const plotTop = u.bbox.top / (dependencies._uPlot.pxRatio as number);
+    const plotTop = u.bbox.top / uPlot.pxRatio;
     const values = splits.map((split: number) => {
       // Like Plotly, hide a Y tick label that would (partly) be above our container.
 
@@ -3817,7 +3818,7 @@ const pathArea = (u: uPlot): IPathArea | undefined => {
     xMax,
     yMin,
     yMax,
-    pxRatio: dependencies._uPlot.pxRatio as number
+    pxRatio: uPlot.pxRatio
   };
 };
 
@@ -4441,7 +4442,7 @@ const updateHover = (): void => {
   //       whole number of device pixels wide (see lineWidth()), so that it is crisp whatever our pixel ratio.
 
   const mainDivRect = mainDiv.getBoundingClientRect();
-  const pxRatio = dependencies._uPlot.pxRatio as number;
+  const pxRatio = uPlot.pxRatio;
   const guideWidth = lineWidth(pxRatio);
 
   hover.value = {
@@ -4633,7 +4634,7 @@ const createPlot = (width: number, height: number): void => {
     }
   };
 
-  plot = new dependencies._uPlot(
+  plot = new uPlot(
     {
       mode: 2,
       width,
@@ -4728,7 +4729,7 @@ const createPlot = (width: number, height: number): void => {
             //       our plot mirrored. This hook gets called after our plotting area has been laid out and before our
             //       plot gets drawn, so we can check the size of our plotting area here.
 
-            const pxRatio = dependencies._uPlot.pxRatio as number;
+            const pxRatio = uPlot.pxRatio;
             const plotWidth = u.bbox.width / pxRatio;
             const plotHeight = u.bbox.height / pxRatio;
 
