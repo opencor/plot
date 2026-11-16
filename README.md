@@ -13,6 +13,7 @@ Key characteristics:
 
 ```bash
 bun install          # Install the dependencies.
+bun run build        # Build the library.
 bun format           # Format the code.
 bun format:check     # Check the code formatting (without fixing it).
 bun lint             # Lint the code.
