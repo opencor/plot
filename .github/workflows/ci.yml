@@ -16,6 +16,7 @@ jobs:
           - name: Build
           - name: Code formatting
           - name: Linting
+          - name: Testing
           - name: Type checking
     steps:
       - name: Check out OpenCOR Plot
@@ -38,6 +39,10 @@ jobs:
       - name: Linting
         if: ${{ matrix.name == 'Linting' }}
         run: bun lint:check
+      - name: Testing
+        if: ${{ matrix.name == 'Testing' }}
+        # Note: our code coverage must be 100% (see bunfig.toml).
+        run: bun test --coverage
       - name: Type checking
         if: ${{ matrix.name == 'Type checking' }}
         run: bun typecheck

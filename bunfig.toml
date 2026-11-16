@@ -1,0 +1,10 @@
+[test]
+# Make the DOM (as implemented by happy-dom) available to our tests.
+preload = ["./test.setup.ts"]
+
+# Our code coverage, which must be 100% (for both lines and functions), but only for our code (i.e. not our tests).
+coverageSkipTestFiles = true
+coveragePathIgnorePatterns = ["test.setup.ts"]
+coverageThreshold = 1.0
+coverageReporter = ["text", "lcov"]
+coverageDir = "coverage"

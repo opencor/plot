@@ -20,6 +20,9 @@ bun format           # Format the code.
 bun format:check     # Check the code formatting (without fixing it).
 bun lint             # Lint the code.
 bun lint:check       # Lint the code (without fixing it).
+bun test             # Run the tests.
+bun test --coverage  # Run the tests with code coverage (which must be 100%).
+bun test --watch     # Run the tests in watch mode.
 bun typecheck        # Type check the code.
 bun clean            # Remove all generated files.
 ```
