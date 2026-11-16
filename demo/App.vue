@@ -2,14 +2,169 @@
   <div class="demo">
     <header class="demo-header">
       <h1>OpenCOR Plot</h1>
+      <label>
+        Theme:
+        <select v-model="theme">
+          <option value="system">System</option>
+          <option value="light">Light</option>
+          <option value="dark">Dark</option>
+        </select>
+      </label>
+      <label>
+        <input v-model="showLegend" type="checkbox" />
+        Legend
+      </label>
+      <label>
+        <input v-model="customContextMenu" type="checkbox" />
+        Custom context menu
+      </label>
+      <span v-if="csvExportStatus" class="demo-status">{{ csvExportStatus }}</span>
     </header>
     <main class="demo-main">
       <div class="demo-plot">
-        <OpenCORPlot />
+        <OpenCORPlot ref="plotRef"
+          :data="data"
+          :theme="theme"
+          :showLegend="showLegend"
+          :customContextMenu="customContextMenu"
+          @contextMenu="onContextMenu"
+          @csvExport="onCsvExport"
+        />
       </div>
     </main>
+    <!--
+    Note: a (very) basic custom context menu, to show how a consumer can use its own context menu (see onContextMenu()).
+    -->
+    <ul v-if="customMenu" ref="customMenuRef" class="demo-custom-menu" tabindex="-1"
+      :style="{ left: `${customMenu.x}px`, top: `${customMenu.y}px` }"
+      @keydown.escape="hideCustomMenu"
+    >
+      <li v-for="(item, index) in customMenu.items" :key="index">
+        <hr v-if="!item.command" />
+        <button v-else type="button" @click="onCustomMenuItemClick(item.command)">{{ item.label }}</button>
+      </li>
+    </ul>
   </div>
 </template>
+
+<script setup lang="ts">
+import * as vue from 'vue';
+
+import OpenCORPlot, {
+  type GraphPanelTheme,
+  type IContextMenuItem,
+  type IGraphPanelContextMenuEvent,
+  type IGraphPanelCsvExportEvent,
+  type IGraphPanelData
+} from '../index';
+
+// Some data to plot, i.e. a few traces with 1,001 points each.
+
+const NB_OF_POINTS = 1001;
+const X_MAX = 10;
+const ONE_OVER_NB_OF_POINTS_MINUS_ONE = 1 / (NB_OF_POINTS - 1);
+
+const x = Float64Array.from(
+  { length: NB_OF_POINTS },
+  (_value: number, i: number) => i * X_MAX * ONE_OVER_NB_OF_POINTS_MINUS_ONE
+);
+const trace = (name: string, color: string, f: (x: number) => number) => {
+  return { name, xValue: 'x', x, yValue: name, y: x.map(f), color };
+};
+
+const data: IGraphPanelData = {
+  xAxisTitle: 'Time (<i>s</i>)',
+  yAxisTitle: 'Signal',
+  traces: [
+    trace('sin(x)', '#4e79a7', Math.sin),
+    trace('cos(x)', '#f28e2b', Math.cos),
+    trace('e<sup>−x/3</sup> sin(3x)', '#59a14f', (x: number) => Math.exp(-x / 3) * Math.sin(3 * x))
+  ]
+};
+
+// Our options.
+
+const theme = vue.ref<GraphPanelTheme>('system');
+const showLegend = vue.ref<boolean>(true);
+const customContextMenu = vue.ref<boolean>(false);
+
+// CSV export progress.
+
+const csvExportStatus = vue.ref<string>('');
+
+const onCsvExport = (event: IGraphPanelCsvExportEvent): void => {
+  if (event.type === 'started') {
+    csvExportStatus.value = 'Exporting to CSV...';
+  } else if (event.type === 'progress') {
+    csvExportStatus.value = `Exporting to CSV... ${event.percent}%`;
+  } else {
+    csvExportStatus.value = event.success ? 'Exported to CSV.' : 'Failed to export to CSV.';
+
+    setTimeout(() => {
+      csvExportStatus.value = '';
+    }, 2000);
+  }
+};
+
+// Custom context menu, which lists our items (including those of submenus) as buttons.
+
+interface ICustomMenuItem {
+  label: string;
+  command?: () => void;
+}
+
+const plotRef = vue.useTemplateRef<InstanceType<typeof OpenCORPlot>>('plotRef');
+const customMenuRef = vue.useTemplateRef<HTMLElement>('customMenuRef');
+const customMenu = vue.ref<{ x: number; y: number; items: ICustomMenuItem[] } | null>(null);
+
+const flattenedItems = (items: IContextMenuItem[], prefix: string = ''): ICustomMenuItem[] => {
+  return items.flatMap((item: IContextMenuItem): ICustomMenuItem[] => {
+    if ('separator' in item) {
+      return [{ label: '' }];
+    }
+
+    const label = `${prefix}${item.label}${item.checked ? ' ✓' : ''}`;
+
+    return item.items ? flattenedItems(item.items, `${label} › `) : [{ label, command: item.command }];
+  });
+};
+
+const onContextMenu = async (event: IGraphPanelContextMenuEvent): Promise<void> => {
+  customMenu.value = { x: event.clientX, y: event.clientY, items: flattenedItems(event.items) };
+
+  window.addEventListener('blur', hideCustomMenu);
+  window.addEventListener('pointerdown', onWindowPointerDown, true);
+
+  await vue.nextTick();
+
+  customMenuRef.value?.focus();
+};
+
+const hideCustomMenu = (): void => {
+  if (!customMenu.value) {
+    return;
+  }
+
+  customMenu.value = null;
+
+  window.removeEventListener('blur', hideCustomMenu);
+  window.removeEventListener('pointerdown', onWindowPointerDown, true);
+
+  plotRef.value?.contextMenuHidden();
+};
+
+const onCustomMenuItemClick = (command: () => void): void => {
+  hideCustomMenu();
+
+  command();
+};
+
+const onWindowPointerDown = (event: PointerEvent): void => {
+  if (!(event.target instanceof Node) || !customMenuRef.value?.contains(event.target)) {
+    hideCustomMenu();
+  }
+};
+</script>
 
 <style scoped>
   .demo {
@@ -19,13 +174,31 @@
   }
 
   .demo-header {
-    padding: 0.5rem 1rem;
+    display: flex;
+    gap: 1.5rem;
+    align-items: center;
+    padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--demo-border);
   }
 
   .demo-header h1 {
     margin: 0;
     font-size: 1.25rem;
+  }
+
+  .demo-header label {
+    display: flex;
+    gap: 0.375rem;
+    align-items: center;
+  }
+
+  .demo-header select {
+    padding: 0.125rem 0.25rem;
+    font: inherit;
+  }
+
+  .demo-status {
+    margin-left: auto;
   }
 
   .demo-main {
@@ -37,5 +210,37 @@
   .demo-plot {
     height: 100%;
     border: 1px solid var(--demo-border);
+  }
+
+  .demo-custom-menu {
+    position: fixed;
+    z-index: 1000;
+    margin: 0;
+    padding: 0.25rem;
+    border: 2px dashed #e15759;
+    background-color: var(--demo-background);
+    list-style: none;
+  }
+
+  .demo-custom-menu button {
+    width: 100%;
+    padding: 0.25rem 0.5rem;
+    border: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .demo-custom-menu button:hover,
+  .demo-custom-menu button:focus-visible {
+    background-color: var(--demo-border);
+  }
+
+  .demo-custom-menu hr {
+    margin: 0.25rem 0;
+    border: none;
+    border-top: 1px solid var(--demo-border);
   }
 </style>

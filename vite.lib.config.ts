@@ -12,7 +12,10 @@ export default vite.defineConfig({
       formats: ['es']
     },
     rolldownOptions: {
-      external: ['vue'],
+      // Note: our dependencies are not bundled, but uPlot's CSS is (i.e. uplot/dist/uPlot.min.css is not external), so
+      //       that our CSS (i.e. opencor-plot.css) is all that is needed.
+
+      external: ['uplot', 'vue'],
       output: {
         exports: 'named'
       }
