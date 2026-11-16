@@ -58,6 +58,9 @@
     "typecheck": "bun --bun scripts/type.check.ts --noEmit",
     "version:new": "bun scripts/version.new.ts"
   },
+  "dependencies": {
+    "uplot": "1.6.32"
+  },
   "peerDependencies": {
     "vue": "^3.5.45"
   },
