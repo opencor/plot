@@ -11,10 +11,6 @@
   </div>
 </template>
 
-<script setup lang="ts">
-import { OpenCORPlot } from '../index';
-</script>
-
 <style scoped>
   .demo {
     display: flex;
