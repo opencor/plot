@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  ci:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Build
+          - name: Code formatting
+          - name: Linting
+          - name: Type checking
+    steps:
+      - name: Check out OpenCOR Plot
+        uses: actions/checkout@v7
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: OpenCOR Plot dependencies
+        run: bun install --frozen-lockfile
+      - name: Build OpenCOR Plot
+        if: ${{ matrix.name == 'Build' || matrix.name == 'Type checking' }}
+        # Note #1: when type checking, we need to build OpenCOR Plot first, so that components.d.ts gets generated.
+        # Note #2: we must use `bun run build` rather than `bun build`, since the latter would run bun's own build runner.
+        run: bun run build
+      - name: Build OpenCOR Plot's demo app
+        if: ${{ matrix.name == 'Build' }}
+        run: bun build:demo
+      - name: Code formatting
+        if: ${{ matrix.name == 'Code formatting' }}
+        run: bun format:check
+      - name: Linting
+        if: ${{ matrix.name == 'Linting' }}
+        run: bun lint:check
+      - name: Type checking
+        if: ${{ matrix.name == 'Type checking' }}
+        run: bun typecheck
