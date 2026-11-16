@@ -1,0 +1,60 @@
+{
+  "author": {
+    "name": "Alan Garny",
+    "email": "a.garny@auckland.ac.nz"
+  },
+  "bugs": {
+    "url": "https://github.com/opencor/plot/issues"
+  },
+  "description": "A Vue 3 component for plotting data, using uPlot and WebGL.",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE.txt"
+  ],
+  "homepage": "https://github.com/opencor/plot",
+  "keywords": [
+    "vue",
+    "component",
+    "opencor",
+    "plot",
+    "chart",
+    "uplot",
+    "webgl"
+  ],
+  "license": "Apache-2.0",
+  "name": "@opencor/plot",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/opencor/plot.git"
+  },
+  "type": "module",
+  "version": "0.20261119.0",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "clean": "bun scripts/clean.ts",
+    "dependencies:update": "bun scripts/dependencies.update.ts",
+    "format": "bunx --bun biome format --fix --max-diagnostics=none",
+    "format:check": "bunx --bun biome format --max-diagnostics=none",
+    "lint": "bunx --bun biome lint --fix --error-on-warnings --max-diagnostics=none && bunx stylelint '**/*.css' --allow-empty-input --fix",
+    "lint:check": "bunx --bun biome lint --error-on-warnings --max-diagnostics=none && bunx stylelint '**/*.css' --allow-empty-input",
+    "typecheck": "bun --bun scripts/type.check.ts --noEmit",
+    "version:new": "bun scripts/version.new.ts"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.45"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@types/bun": "^1.4.4",
+    "@vue/tsconfig": "^0.9.1",
+    "stylelint": "^18.0.0",
+    "stylelint-config-standard": "^41.0.0",
+    "typescript": "^7.0.2",
+    "typescript-6": "npm:typescript@^6.0.3",
+    "vue": "^3.5.45",
+    "vue-tsc": "^3.3.14"
+  }
+}
