@@ -1,7 +1,7 @@
 <template>
-  <div class="opencor-plot-theme flex flex-row h-full" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
-    <div v-if="showMarker" class="w-0.75 bg-primary" />
-    <div ref="mainDivRef" class="plot-panel grow h-full min-w-0 relative overflow-hidden"
+  <div class="opencor-plot-theme graph-panel" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
+    <div v-if="showMarker" class="marker" />
+    <div ref="mainDivRef" class="plot-panel"
       :style="{
         backgroundColor: themeColors.background,
         color: themeColors.text
@@ -12,7 +12,7 @@
       Note: our plot can be focused, so that it can be used with the keyboard (see onPlotKeyDown()), in which case it is
             described to assistive technologies as an image of our plot.
       -->
-      <div ref="plotDivRef" class="plot-area absolute inset-0"
+      <div ref="plotDivRef" class="plot-area"
         tabindex="0"
         role="img"
         aria-roledescription="plot"
@@ -20,8 +20,8 @@
         :aria-describedby="plotDescriptionId"
         @keydown="onPlotKeyDown"
       />
-      <span :id="plotDescriptionId" class="sr-only">Press + or − to zoom in or out, 0 to reset the zoom, the arrow keys to pan, and Shift+F10 for more options (e.g., to export the plotted data to CSV).</span>
-      <svg v-if="zoomBox && plotRect" class="absolute z-2 pointer-events-none"
+      <span :id="plotDescriptionId" class="visually-hidden">Press + or − to zoom in or out, 0 to reset the zoom, the arrow keys to pan, and Shift+F10 for more options (e.g., to export the plotted data to CSV).</span>
+      <svg v-if="zoomBox && plotRect" class="zoom-box"
         :style="{ left: `${plotRect.left}px`, top: `${plotRect.top}px` }"
         :width="plotRect.width"
         :height="plotRect.height"
@@ -36,7 +36,7 @@
         />
       </svg>
       <template v-if="plotRect">
-        <div v-for="dragger in draggers" :key="dragger.type" class="dragger absolute z-1"
+        <div v-for="dragger in draggers" :key="dragger.type" class="dragger"
           :style="{
             left: `${dragger.left}px`,
             top: `${dragger.top}px`,
@@ -82,7 +82,7 @@
           v-html="common.sanitiseHtml(data.yAxisTitle)"
         />
       </template>
-      <svg v-if="hover && plotRect" class="absolute z-3 pointer-events-none"
+      <svg v-if="hover && plotRect" class="hover-overlay"
         :style="{ left: `${plotRect.left}px`, top: `${plotRect.top}px` }"
         :width="plotRect.width"
         :height="plotRect.height"
@@ -143,7 +143,7 @@
       </div>
     </Teleport>
     <Teleport v-if="dragCursor" :to="appendTo ?? 'body'">
-      <div class="fixed inset-0 z-9999" :style="{ cursor: dragCursor }" @wheel.prevent />
+      <div class="drag-cursor-overlay" :style="{ cursor: dragCursor }" @wheel.prevent />
     </Teleport>
   </div>
 </template>
@@ -5095,6 +5095,85 @@ vue.watch(
 </script>
 
 <style scoped>
+  /**
+   * Note: our elements (and those of uPlot, see uPlot.min.css) are sized using their border box, whatever the
+   *       consumer's styles are, including our hover tooltip (which may be appended elsewhere, see appendTo).
+   */
+
+  .graph-panel,
+  .graph-panel *,
+  .graph-panel ::before,
+  .graph-panel ::after,
+  .hover-tooltip,
+  .hover-tooltip * {
+    box-sizing: border-box;
+  }
+
+  .graph-panel {
+    display: flex;
+    flex-direction: row;
+    height: 100%;
+  }
+
+  .marker {
+    width: 0.1875rem;
+    background-color: var(--theme-primary-color);
+  }
+
+  .plot-panel {
+    position: relative;
+    flex-grow: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .plot-area {
+    position: absolute;
+    inset: 0;
+  }
+
+  .zoom-box,
+  .hover-overlay {
+    position: absolute;
+    pointer-events: none;
+  }
+
+  .zoom-box {
+    z-index: 2;
+  }
+
+  .hover-overlay {
+    z-index: 3;
+  }
+
+  .dragger {
+    position: absolute;
+    z-index: 1;
+  }
+
+  .drag-cursor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+  }
+
+  /**
+   * Note: our plot's description is only for assistive technologies (see our template), so we hide it visually.
+   */
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    border-width: 0;
+    white-space: nowrap;
+  }
+
   .axis-title {
     position: absolute;
     line-height: 1;
