@@ -38,10 +38,9 @@ export const downloadFile = (filename: string, content: string | Blob, type: str
 
 // A method to sanitise some HTML that may come from an untrusted source (e.g., the name of a trace or the title of an
 // axis in a UI JSON file, or the description of an issue), so that it can be rendered as HTML (e.g., using v-html).
-// Note #1: only a few formatting elements are kept (e.g., "<i>I<sub>K,r</sub></i>"), without any of their attributes,
-//          except for the class of a PrimeIcons icon (e.g., <i class="pi pi-cog"></i>). Any other element is replaced
-//          with its contents, unless its contents are not meant to be shown as text (e.g., a script), in which case it
-//          is removed altogether.
+// Note #1: only a few formatting elements are kept (e.g., "<i>I<sub>K,r</sub></i>"), without any of their attributes.
+//          Any other element is replaced with its contents, unless its contents are not meant to be shown as text (e.g.,
+//          a script), in which case it is removed altogether.
 // Note #2: our HTML is parsed in a separate document, so that nothing in it gets loaded or run (e.g., an image).
 // Note #3: the same HTML tends to be sanitised over and over again (e.g., the name of a trace each time the legend of a
 //          plot is rendered), so we cache our results.
@@ -59,7 +58,6 @@ const SANITISE_HTML_REMOVED_ELEMENTS = new Set<string>([
   'textarea',
   'title'
 ]);
-const SANITISE_HTML_ICON_CLASS_REGEX = /^\s*pi(\s+pi-[a-z0-9-]+)+\s*$/;
 const SANITISE_HTML_CACHE_SIZE = 256;
 
 const sanitiseHtmlCache = new Map<string, string>();
@@ -74,11 +72,6 @@ const sanitiseHtmlNode = (node: Node, parent: Node, document: Document): void =>
 
       if (SANITISE_HTML_ALLOWED_ELEMENTS.has(elementName)) {
         const sanitisedElement = document.createElement(elementName);
-        const elementClass = element.getAttribute('class');
-
-        if (elementName === 'i' && elementClass && SANITISE_HTML_ICON_CLASS_REGEX.test(elementClass)) {
-          sanitisedElement.setAttribute('class', elementClass.trim());
-        }
 
         sanitiseHtmlNode(element, sanitisedElement, document);
 
