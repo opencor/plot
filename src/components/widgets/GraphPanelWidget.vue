@@ -1,5 +1,5 @@
 <template>
-  <div ref="rootRef" class="flex flex-row h-full">
+  <div class="flex flex-row h-full">
     <div v-if="showMarker" class="w-0.75 bg-primary" />
     <div ref="mainDivRef" class="plot-panel grow h-full min-w-0 relative overflow-hidden"
       :style="{
@@ -127,8 +127,8 @@
         </button>
       </div>
     </div>
-    <ContextMenuWidget ref="contextMenuRef" :model="contextMenuItems" :appendTo="appendTarget" @hide="onContextMenuHide" />
-    <Teleport v-if="hover" :to="appendTarget ?? 'body'">
+    <ContextMenuWidget ref="contextMenuRef" :model="contextMenuItems" :appendTo="appendTo" @hide="onContextMenuHide" />
+    <Teleport v-if="hover" :to="appendTo ?? 'body'">
       <div ref="hoverTooltipRef" class="hover-tooltip">
         <div class="hover-tooltip-header">
           <span v-if="data.xAxisTitle" class="hover-tooltip-name" v-html="common.sanitiseHtml(data.xAxisTitle)" />
@@ -142,7 +142,7 @@
         <div v-if="hover.otherRows" class="hover-tooltip-other-rows">+{{ hover.otherRows }} more</div>
       </div>
     </Teleport>
-    <Teleport v-if="dragCursor" :to="appendTarget ?? 'body'">
+    <Teleport v-if="dragCursor" :to="appendTo ?? 'body'">
       <div class="fixed inset-0 z-9999" :style="{ cursor: dragCursor }" @wheel.prevent />
     </Teleport>
   </div>
@@ -159,7 +159,6 @@ import * as colors from '../../common/colors';
 import * as common from '../../common/common';
 import { NO_DELAY } from '../../common/constants';
 import * as math from '../../common/math';
-import * as vueCommon from '../../common/vueCommon';
 
 import ContextMenuWidget from './ContextMenuWidget.vue';
 
@@ -209,16 +208,26 @@ export type IGraphPanelCsvExportEvent =
   | IGraphPanelCsvExportProgressEvent
   | IGraphPanelCsvExportFinishedEvent;
 
+// Our theme, i.e. whether we should use whatever mode the system uses, light mode, or dark mode.
+
+export type GraphPanelTheme = 'system' | 'light' | 'dark';
+
+// Note: appendTo is where our overlays (i.e. our context menu, hover tooltip, and drag cursor) get appended, which is
+//       our document's body by default.
+
 const props = withDefaults(
   defineProps<{
     data: IGraphPanelData;
     showMarker?: boolean;
     margins?: IGraphPanelMargins;
     showLegend?: boolean;
+    theme?: GraphPanelTheme;
+    appendTo?: HTMLElement | string;
   }>(),
   {
     showMarker: false,
-    showLegend: true
+    showLegend: true,
+    theme: 'system'
   }
 );
 
@@ -317,7 +326,6 @@ defineExpose({
   resize
 });
 
-const rootRef = vue.shallowRef<HTMLElement | null>(null);
 const mainDivRef = vue.shallowRef<HTMLElement | null>(null);
 const plotDivRef = vue.shallowRef<HTMLElement | null>(null);
 const legendRef = vue.shallowRef<HTMLElement | null>(null);
@@ -325,9 +333,7 @@ const xAxisTitleRef = vue.shallowRef<HTMLElement | null>(null);
 const yAxisTitleRef = vue.shallowRef<HTMLElement | null>(null);
 const rangeEditorRef = vue.shallowRef<HTMLElement | null>(null);
 const hoverTooltipRef = vue.shallowRef<HTMLElement | null>(null);
-const theme = vueCommon.useTheme();
 const contextMenuRef = vue.ref<InstanceType<typeof ContextMenuWidget> | null>(null);
-const appendTarget = vueCommon.useAppendTarget(rootRef);
 let plot: uPlot | undefined;
 let plotSignature: string | undefined;
 let isPlotOutdated = false;
@@ -341,6 +347,22 @@ let trackedMargins: IGraphPanelMargins | undefined;
 // axes below).
 
 const logAxes = vue.ref<Record<AxisKey, boolean>>({ x: false, y: false });
+
+// Whether we use light mode, i.e. whether our theme is light or our theme is system and the system uses light mode.
+// Note: we only access window if it exists, so that we can be imported without it (e.g., when rendering on a server).
+//       We also keep track of whether the system uses light mode (see onPrefersColorSchemeChange()), but only while we
+//       are mounted.
+
+const prefersColorScheme = typeof window !== 'undefined' ? window.matchMedia('(prefers-color-scheme: light)') : null;
+const systemUsesLightMode = vue.ref<boolean>(prefersColorScheme?.matches ?? true);
+
+const onPrefersColorSchemeChange = (event: MediaQueryListEvent): void => {
+  systemUsesLightMode.value = event.matches;
+};
+
+const isLightMode = vue.computed<boolean>(() => {
+  return props.theme === 'light' || (systemUsesLightMode.value && props.theme !== 'dark');
+});
 
 // Our theme, which uses PrimeVue's CSS variables, so that it is consistent with the rest of OpenCOR.
 // Note: a canvas doesn't understand CSS variables, so we resolve them (see colors.cssColor()) for what gets drawn on
@@ -362,7 +384,7 @@ interface IThemeColors {
 }
 
 const themeColors = vue.computed<IThemeColors>(() => {
-  const useLightMode = theme.useLightMode();
+  const useLightMode = isLightMode.value;
 
   return {
     background: 'var(--p-content-background)',
@@ -4828,7 +4850,7 @@ const updatePlot = (): void => {
   // Create or update our plot.
   // Note: we only (re)create our plot if needed since it is much cheaper to update its data.
 
-  const signature = `${props.data.traces.length}::${titles}::${theme.useLightMode()}::${logAxes.value.x}::${logAxes.value.y}`;
+  const signature = `${props.data.traces.length}::${titles}::${isLightMode.value}::${logAxes.value.x}::${logAxes.value.y}`;
   const newLegendWidth = measureLegendWidth();
   const legendWidthChanged = newLegendWidth !== legendWidth;
 
@@ -4915,12 +4937,24 @@ vue.onMounted(() => {
   stopTrackingLegendSize = trackElementSize(legendRef, () => {
     syncLegendWidth();
   });
+
+  // Start tracking whether the system uses light mode.
+
+  if (prefersColorScheme) {
+    systemUsesLightMode.value = prefersColorScheme.matches;
+
+    prefersColorScheme.addEventListener('change', onPrefersColorSchemeChange);
+  }
 });
 
 vue.onBeforeUnmount(() => {
   // Make sure that we don't do anything else after we are unmounted.
 
   isUnmounted = true;
+
+  // Stop tracking whether the system uses light mode.
+
+  prefersColorScheme?.removeEventListener('change', onPrefersColorSchemeChange);
 
   // Stop zooming (including any zoom animation), hovering, and dragging, and close our range editor (discarding its
   // value).
@@ -5004,7 +5038,7 @@ vue.watch(
 // Update our plot when the theme changes.
 
 vue.watch(
-  () => theme.useLightMode(),
+  () => isLightMode.value,
   () => {
     void vue.nextTick().then(() => {
       updatePlot();
