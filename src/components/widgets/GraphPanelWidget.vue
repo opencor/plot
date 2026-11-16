@@ -1,5 +1,5 @@
 <template>
-  <div class="opencor-plot-theme flex flex-row h-full" :class="{ 'opencor-plot-dark-mode': !isLightMode }">
+  <div class="opencor-plot-theme flex flex-row h-full" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
     <div v-if="showMarker" class="w-0.75 bg-primary" />
     <div ref="mainDivRef" class="plot-panel grow h-full min-w-0 relative overflow-hidden"
       :style="{
@@ -127,9 +127,9 @@
         </button>
       </div>
     </div>
-    <ContextMenuWidget ref="contextMenuRef" :model="contextMenuItems" :appendTo="appendTo" @hide="onContextMenuHide" />
+    <ContextMenuWidget v-if="!customContextMenu" ref="contextMenuRef" :items="contextMenuItems" :appendTo="appendTo" :darkMode="isDarkMode" @hide="onContextMenuHide" />
     <Teleport v-if="hover" :to="appendTo ?? 'body'">
-      <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': !isLightMode }">
+      <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
         <div class="hover-tooltip-header">
           <span v-if="data.xAxisTitle" class="hover-tooltip-name" v-html="common.sanitiseHtml(data.xAxisTitle)" />
           <span class="hover-tooltip-value">{{ hover.x }}</span>
@@ -149,7 +149,6 @@
 </template>
 
 <script setup lang="ts">
-import type { MenuItem } from 'primevue/menuitem';
 import uPlot from 'uplot';
 import * as vue from 'vue';
 
@@ -160,7 +159,9 @@ import * as common from '../../common/common';
 import { NO_DELAY } from '../../common/constants';
 import * as math from '../../common/math';
 
-import ContextMenuWidget from './ContextMenuWidget.vue';
+import '../../assets/theme.css';
+
+import ContextMenuWidget, { type IContextMenuItem } from './ContextMenuWidget.vue';
 
 export interface IGraphPanelPlotTrace {
   name: string;
@@ -212,8 +213,25 @@ export type IGraphPanelCsvExportEvent =
 
 export type GraphPanelTheme = 'system' | 'light' | 'dark';
 
-// Note: appendTo is where our overlays (i.e. our context menu, hover tooltip, and drag cursor) get appended, which is
-//       our document's body by default.
+// Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
+// customContextMenu), so that it can be shown instead. Its items are those of our context menu (including their state,
+// e.g. whether an axis is logarithmic, and their command, e.g. to zoom in around where our context menu was requested).
+// Note: our context menu can be requested using the keyboard (i.e. Shift+F10 or the context menu key), in which case
+//       our custom context menu should get the keyboard focus, so that it can be used with the keyboard straight away.
+//       Whether our context menu was requested using the mouse or the keyboard, contextMenuHidden() should be called
+//       once our custom context menu has been hidden, so that our plot can get the keyboard focus back, if needed.
+
+export interface IGraphPanelContextMenuEvent {
+  clientX: number;
+  clientY: number;
+  usingKeyboard: boolean;
+  items: IContextMenuItem[];
+}
+
+// Note #1: appendTo is where our overlays (i.e. our context menu, hover tooltip, and drag cursor) get appended, which
+//          is our document's body by default.
+// Note #2: customContextMenu is whether we should emit a contextMenu event rather than show our own context menu (see
+//          IGraphPanelContextMenuEvent).
 
 const props = withDefaults(
   defineProps<{
@@ -223,15 +241,18 @@ const props = withDefaults(
     showLegend?: boolean;
     theme?: GraphPanelTheme;
     appendTo?: HTMLElement | string;
+    customContextMenu?: boolean;
   }>(),
   {
     showMarker: false,
     showLegend: true,
-    theme: 'system'
+    theme: 'system',
+    customContextMenu: false
   }
 );
 
 const emit = defineEmits<{
+  contextMenu: [event: IGraphPanelContextMenuEvent];
   csvExport: [event: IGraphPanelCsvExportEvent];
   marginsUpdated: [newMargins: IGraphPanelMargins];
 }>();
@@ -321,7 +342,14 @@ const resetMargins = (): void => {
   updateMarginsAsync();
 };
 
+const contextMenuHidden = (): void => {
+  // Our custom context menu has been hidden (see IGraphPanelContextMenuEvent), so do as if it was our context menu.
+
+  onContextMenuHide();
+};
+
 defineExpose({
+  contextMenuHidden,
   resetMargins,
   resize
 });
@@ -348,7 +376,7 @@ let trackedMargins: IGraphPanelMargins | undefined;
 
 const logAxes = vue.ref<Record<AxisKey, boolean>>({ x: false, y: false });
 
-// Whether we use light mode, i.e. whether our theme is light or our theme is system and the system uses light mode.
+// Whether we use dark mode, i.e. whether our theme is dark or our theme is system and the system uses dark mode.
 // Note: we only access window if it exists, so that we can be imported without it (e.g., when rendering on a server).
 //       We also keep track of whether the system uses light mode (see onPrefersColorSchemeChange()), but only while we
 //       are mounted.
@@ -360,17 +388,16 @@ const onPrefersColorSchemeChange = (event: MediaQueryListEvent): void => {
   systemUsesLightMode.value = event.matches;
 };
 
-const isLightMode = vue.computed<boolean>(() => {
-  return props.theme === 'light' || (systemUsesLightMode.value && props.theme !== 'dark');
+const isDarkMode = vue.computed<boolean>(() => {
+  return props.theme === 'dark' || (!systemUsesLightMode.value && props.theme !== 'light');
 });
 
-// Our theme colours, which use our theme's CSS variables (see .opencor-plot-theme in our styles), so that they can be
-// customised.
+// Our theme colours, which use our theme's CSS variables (see theme.css), so that they can be customised.
 // Note: a canvas doesn't understand CSS variables, so we resolve them (see resolvedColor()) for what gets drawn on
 //       uPlot's canvas (i.e. our grid lines, zero lines, and tick labels). This is fine since we resolve them whenever
 //       our plot gets created (which it does whenever our theme changes, see updatePlot()) or drawn, and our CSS
-//       variables get updated as soon as our theme changes (see .opencor-plot-dark-mode in our styles). We also resolve
-//       them for our exports (see svgDocument()) since our CSS variables are not available to them.
+//       variables get updated as soon as our theme changes (see theme.css). We also resolve them for our exports (see
+//       svgDocument()) since our CSS variables are not available to them.
 
 interface IThemeColors {
   background: string;
@@ -749,19 +776,19 @@ const onLegendDoubleClick = (index: number): void => {
 
 // Context menu.
 
-const contextMenuItems = vue.computed<MenuItem[]>(() => [
+const contextMenuItems = vue.computed<IContextMenuItem[]>(() => [
   {
-    icon: 'pi pi-search-plus',
+    icon: 'search-plus',
     label: 'Zoom In',
     command: () => zoomIn()
   },
   {
-    icon: 'pi pi-search-minus',
+    icon: 'search-minus',
     label: 'Zoom Out',
     command: () => zoomOut()
   },
   {
-    icon: 'pi pi-refresh',
+    icon: 'refresh',
     label: 'Reset Zoom',
     command: () => resetZoom()
   },
@@ -769,13 +796,13 @@ const contextMenuItems = vue.computed<MenuItem[]>(() => [
     separator: true
   },
   {
-    icon: 'pi pi-arrows-h',
+    icon: 'arrows-h',
     label: 'Logarithmic X Axis',
     checked: logAxes.value.x,
     command: () => toggleLogAxis('x')
   },
   {
-    icon: 'pi pi-arrows-v',
+    icon: 'arrows-v',
     label: 'Logarithmic Y Axis',
     checked: logAxes.value.y,
     command: () => toggleLogAxis('y')
@@ -784,31 +811,31 @@ const contextMenuItems = vue.computed<MenuItem[]>(() => [
     separator: true
   },
   {
-    icon: 'pi pi-copy',
+    icon: 'copy',
     label: 'Copy to Clipboard',
     command: () => copyToClipboard()
   },
   {
-    icon: 'pi pi-chart-line',
+    icon: 'chart-line',
     label: 'Export Plot',
     items: [
       {
-        icon: 'pi pi-image',
+        icon: 'image',
         label: 'JPEG',
         command: () => exportToImage('jpeg')
       },
       {
-        icon: 'pi pi-image',
+        icon: 'image',
         label: 'PNG',
         command: () => exportToImage('png')
       },
       {
-        icon: 'pi pi-image',
+        icon: 'image',
         label: 'SVG',
         command: () => exportToImage('svg')
       },
       {
-        icon: 'pi pi-image',
+        icon: 'image',
         label: 'WebP',
         command: () => exportToImage('webp')
       }
@@ -819,12 +846,28 @@ const contextMenuItems = vue.computed<MenuItem[]>(() => [
   },
   {
     label: 'Export Data to CSV',
-    icon: 'pi pi-download',
+    icon: 'download',
     command: () => exportToCsv()
   }
 ]);
 
 let contextMenuShownUsingKeyboard = false;
+
+const showContextMenu = (event: MouseEvent): void => {
+  // Show our context menu or, if we are to use a custom context menu, let people know that it should be shown (see
+  // IGraphPanelContextMenuEvent).
+
+  if (props.customContextMenu) {
+    emit('contextMenu', {
+      clientX: event.clientX,
+      clientY: event.clientY,
+      usingKeyboard: contextMenuShownUsingKeyboard,
+      items: contextMenuItems.value
+    });
+  } else {
+    void contextMenuRef.value?.show(event);
+  }
+};
 
 const onContextMenu = (event: MouseEvent): void => {
   // Leave a context menu that is requested from our range editor to the browser (e.g., to copy/paste some text), so
@@ -872,7 +915,7 @@ const onContextMenu = (event: MouseEvent): void => {
 
   // Show our context menu.
 
-  contextMenuRef.value?.show(event);
+  showContextMenu(event);
 };
 
 const showContextMenuUsingKeyboard = (): void => {
@@ -894,7 +937,7 @@ const showContextMenuUsingKeyboard = (): void => {
   contextMenuCenterFractions = {};
   contextMenuShownUsingKeyboard = true;
 
-  contextMenuRef.value?.show(
+  showContextMenu(
     new MouseEvent('contextmenu', {
       clientX: mainDivRect.left + rect.left + 0.5 * rect.width,
       clientY: mainDivRect.top + rect.top + 0.5 * rect.height
@@ -4854,7 +4897,7 @@ const updatePlot = (): void => {
   // Create or update our plot.
   // Note: we only (re)create our plot if needed since it is much cheaper to update its data.
 
-  const signature = `${props.data.traces.length}::${titles}::${isLightMode.value}::${logAxes.value.x}::${logAxes.value.y}`;
+  const signature = `${props.data.traces.length}::${titles}::${isDarkMode.value}::${logAxes.value.x}::${logAxes.value.y}`;
   const newLegendWidth = measureLegendWidth();
   const legendWidthChanged = newLegendWidth !== legendWidth;
 
@@ -5042,7 +5085,7 @@ vue.watch(
 // Update our plot when the theme changes.
 
 vue.watch(
-  () => isLightMode.value,
+  () => isDarkMode.value,
   () => {
     void vue.nextTick().then(() => {
       updatePlot();
@@ -5052,58 +5095,6 @@ vue.watch(
 </script>
 
 <style scoped>
-  /**
-   * Our theme, which can be customised by setting our public CSS variables (i.e. --opencor-plot-*) on one of our
-   * ancestors (e.g., --opencor-plot-background). By default, our theme looks like PrimeVue's Aura theme, in both light
-   * and dark modes.
-   * Note #1: we use our theme's CSS variables (i.e. --theme-*) rather than our public ones, since the latter would
-   *          otherwise always have our default values (since they would be defined on our own elements and therefore
-   *          override those inherited from our ancestors).
-   * Note #2: our theme is applied to our root element and to our overlays (e.g., our hover tooltip), since they may be
-   *          appended elsewhere (see appendTo) and would therefore not inherit our theme.
-   */
-
-  .opencor-plot-theme {
-    --theme-background: var(--opencor-plot-background, #fff);
-    --theme-text-color: var(--opencor-plot-text-color, #334155);
-    --theme-muted-text-color: var(--opencor-plot-muted-text-color, #64748b);
-    --theme-primary-color: var(--opencor-plot-primary-color, #10b981);
-    --theme-grid-color: var(--opencor-plot-grid-color, #e2e8f0);
-    --theme-zero-line-color: var(--opencor-plot-zero-line-color, #cbd5e1);
-    --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #cbd5e1);
-    --theme-hover-background: var(--opencor-plot-hover-background, #f1f5f9);
-    --theme-overlay-background: var(--opencor-plot-overlay-background, #fff);
-    --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #e2e8f0);
-    --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #334155);
-    --theme-overlay-shadow: var(
-      --opencor-plot-overlay-shadow,
-      0 8px 24px -4px rgb(0 0 0 / 12%),
-      0 2px 6px -2px rgb(0 0 0 / 8%)
-    );
-    --theme-border-radius: var(--opencor-plot-border-radius, 4px);
-    --theme-focus-ring-width: var(--opencor-plot-focus-ring-width, 2px);
-    --theme-focus-ring-color: var(--opencor-plot-focus-ring-color, var(--theme-primary-color));
-  }
-
-  .opencor-plot-theme.opencor-plot-dark-mode {
-    --theme-background: var(--opencor-plot-background, #18181b);
-    --theme-text-color: var(--opencor-plot-text-color, #fff);
-    --theme-muted-text-color: var(--opencor-plot-muted-text-color, #a1a1aa);
-    --theme-primary-color: var(--opencor-plot-primary-color, #34d399);
-    --theme-grid-color: var(--opencor-plot-grid-color, #27272a);
-    --theme-zero-line-color: var(--opencor-plot-zero-line-color, #52525b);
-    --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #52525b);
-    --theme-hover-background: var(--opencor-plot-hover-background, #27272a);
-    --theme-overlay-background: var(--opencor-plot-overlay-background, #18181b);
-    --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #3f3f46);
-    --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #fff);
-    --theme-overlay-shadow: var(
-      --opencor-plot-overlay-shadow,
-      0 8px 24px -4px rgb(0 0 0 / 50%),
-      0 2px 6px -2px rgb(0 0 0 / 40%)
-    );
-  }
-
   .axis-title {
     position: absolute;
     line-height: 1;
@@ -5135,8 +5126,8 @@ vue.watch(
   }
 
   /**
-   * Note: our hover tooltip is shown above our panels (so that it doesn't get clipped by short panels), but below
-   *       PrimeVue's overlays (e.g., our context menu), which z-index is at least 1000.
+   * Note: our hover tooltip is shown above our panels (so that it doesn't get clipped by short panels), but below our
+   *       context menu (see ContextMenuWidget.vue), which z-index is 1000.
    */
 
   .hover-tooltip {

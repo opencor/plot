@@ -1,0 +1,53 @@
+/**
+ * Our theme, which can be customised by setting our public CSS variables (i.e. --opencor-plot-*) on one of our
+ * ancestors (e.g., --opencor-plot-background). By default, our theme looks like PrimeVue's Aura theme, in both light
+ * and dark modes.
+ * Note #1: we use our theme's CSS variables (i.e. --theme-*) rather than our public ones, since the latter would
+ *          otherwise always have our default values (since they would be defined on our own elements and therefore
+ *          override those inherited from our ancestors).
+ * Note #2: our theme is applied to the root element of our graph panel (see GraphPanelWidget.vue) and to our overlays
+ *          (e.g., our hover tooltip and our context menu, see ContextMenuWidget.vue), since they may be appended
+ *          elsewhere (see appendTo) and would therefore not inherit our theme. This is also why our theme is not
+ *          scoped to a particular component.
+ */
+
+.opencor-plot-theme {
+  --theme-background: var(--opencor-plot-background, #fff);
+  --theme-text-color: var(--opencor-plot-text-color, #334155);
+  --theme-muted-text-color: var(--opencor-plot-muted-text-color, #64748b);
+  --theme-primary-color: var(--opencor-plot-primary-color, #10b981);
+  --theme-grid-color: var(--opencor-plot-grid-color, #e2e8f0);
+  --theme-zero-line-color: var(--opencor-plot-zero-line-color, #cbd5e1);
+  --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #cbd5e1);
+  --theme-hover-background: var(--opencor-plot-hover-background, #f1f5f9);
+  --theme-overlay-background: var(--opencor-plot-overlay-background, #fff);
+  --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #e2e8f0);
+  --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #334155);
+  --theme-overlay-shadow: var(
+    --opencor-plot-overlay-shadow,
+    0 8px 24px -4px rgb(0 0 0 / 12%),
+    0 2px 6px -2px rgb(0 0 0 / 8%)
+  );
+  --theme-border-radius: var(--opencor-plot-border-radius, 4px);
+  --theme-focus-ring-width: var(--opencor-plot-focus-ring-width, 2px);
+  --theme-focus-ring-color: var(--opencor-plot-focus-ring-color, var(--theme-primary-color));
+}
+
+.opencor-plot-theme.opencor-plot-dark-mode {
+  --theme-background: var(--opencor-plot-background, #18181b);
+  --theme-text-color: var(--opencor-plot-text-color, #fff);
+  --theme-muted-text-color: var(--opencor-plot-muted-text-color, #a1a1aa);
+  --theme-primary-color: var(--opencor-plot-primary-color, #34d399);
+  --theme-grid-color: var(--opencor-plot-grid-color, #27272a);
+  --theme-zero-line-color: var(--opencor-plot-zero-line-color, #52525b);
+  --theme-hidden-trace-color: var(--opencor-plot-hidden-trace-color, #52525b);
+  --theme-hover-background: var(--opencor-plot-hover-background, #27272a);
+  --theme-overlay-background: var(--opencor-plot-overlay-background, #18181b);
+  --theme-overlay-border-color: var(--opencor-plot-overlay-border-color, #3f3f46);
+  --theme-overlay-text-color: var(--opencor-plot-overlay-text-color, #fff);
+  --theme-overlay-shadow: var(
+    --opencor-plot-overlay-shadow,
+    0 8px 24px -4px rgb(0 0 0 / 50%),
+    0 2px 6px -2px rgb(0 0 0 / 40%)
+  );
+}
