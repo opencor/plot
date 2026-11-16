@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+
+  --demo-background: #fff;
+  --demo-text: #1f2937;
+  --demo-border: #d1d5db;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --demo-background: #18181b;
+    --demo-text: #e4e4e7;
+    --demo-border: #3f3f46;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background-color: var(--demo-background);
+  color: var(--demo-text);
+}

@@ -47,8 +47,10 @@
   },
   "scripts": {
     "build": "vite build --config vite.lib.config.ts && bun --bun scripts/type.check.ts --project tsconfig.lib.types.json",
+    "build:demo": "vite build",
     "clean": "bun scripts/clean.ts",
     "dependencies:update": "bun scripts/dependencies.update.ts",
+    "dev": "vite",
     "format": "bunx --bun biome format --fix --max-diagnostics=none",
     "format:check": "bunx --bun biome format --max-diagnostics=none",
     "lint": "bunx --bun biome lint --fix --error-on-warnings --max-diagnostics=none && bunx stylelint '**/*.css' --allow-empty-input --fix",
