@@ -157,11 +157,10 @@ import 'uplot/dist/uPlot.min.css';
 
 import * as colors from '../../common/colors';
 import * as common from '../../common/common';
-import { LONG_DELAY, NO_DELAY } from '../../common/constants';
+import { NO_DELAY } from '../../common/constants';
 import * as math from '../../common/math';
 import * as vueCommon from '../../common/vueCommon';
 
-import { useOpenCORMessage } from '../OpenCORMessage';
 import ContextMenuWidget from './ContextMenuWidget.vue';
 
 export interface IGraphPanelPlotTrace {
@@ -189,6 +188,27 @@ export interface IGraphPanelMargins {
   right: number;
 }
 
+// CSV export events, which can be used to show the progress of an export to CSV (see exportToCsv()).
+
+export interface IGraphPanelCsvExportStartedEvent {
+  type: 'started';
+}
+
+export interface IGraphPanelCsvExportProgressEvent {
+  type: 'progress';
+  percent: number;
+}
+
+export interface IGraphPanelCsvExportFinishedEvent {
+  type: 'finished';
+  success: boolean;
+}
+
+export type IGraphPanelCsvExportEvent =
+  | IGraphPanelCsvExportStartedEvent
+  | IGraphPanelCsvExportProgressEvent
+  | IGraphPanelCsvExportFinishedEvent;
+
 const props = withDefaults(
   defineProps<{
     data: IGraphPanelData;
@@ -203,6 +223,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
+  csvExport: [event: IGraphPanelCsvExportEvent];
   marginsUpdated: [newMargins: IGraphPanelMargins];
 }>();
 
@@ -307,7 +328,6 @@ const hoverTooltipRef = vue.shallowRef<HTMLElement | null>(null);
 const theme = vueCommon.useTheme();
 const contextMenuRef = vue.ref<InstanceType<typeof ContextMenuWidget> | null>(null);
 const appendTarget = vueCommon.useAppendTarget(rootRef);
-const opencorMessage = useOpenCORMessage();
 let plot: uPlot | undefined;
 let plotSignature: string | undefined;
 let isPlotOutdated = false;
@@ -1359,14 +1379,14 @@ const exportToCsv = async (): Promise<void> => {
     return;
   }
 
-  // Show the progress message.
+  // Let people know that we have started exporting to CSV.
 
-  opencorMessage.show('Exporting data to CSV...');
+  emit('csvExport', { type: 'started' });
 
   let successfulExport: boolean = true;
 
   try {
-    // Allow the UI to update before actually starting the export to CSV.
+    // Allow the UI to update (e.g., to show some progress) before actually starting the export to CSV.
 
     await common.waitForNextPaint();
 
@@ -1433,7 +1453,7 @@ const exportToCsv = async (): Promise<void> => {
 
     // Data rows, of which there are as many as the number of values of our longest X column, with empty cells for the
     // X columns (and their Y columns) that have fewer values.
-    // Note: we update the progress message at regular intervals to keep the UI responsive.
+    // Note: we let people know about our progress at regular intervals and keep the UI responsive.
 
     const nbOfRows = Math.max(...groups.map((group) => group.trace.x.length));
     const chunkSize = Math.max(1, Math.floor(0.01 * nbOfRows));
@@ -1453,15 +1473,15 @@ const exportToCsv = async (): Promise<void> => {
       csvLines.push(rowParts.join(','));
 
       if ((row + 1) % chunkSize === 0 || row + 1 === nbOfRows) {
-        opencorMessage.update(Math.floor(percentPerRow * (row + 1)));
+        emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
 
         await common.sleep(NO_DELAY);
       }
     }
 
-    // Make sure that we show 100% before finishing.
+    // Make sure that we report 100% before finishing.
 
-    opencorMessage.update(100);
+    emit('csvExport', { type: 'progress', percent: 100 });
 
     // Create and download the CSV file.
 
@@ -1471,14 +1491,11 @@ const exportToCsv = async (): Promise<void> => {
 
     console.warn('@opencor/plot: failed to export to CSV:', common.formatError(error));
   } finally {
-    // Hide the progress message. If the export succeeded, then delay briefly so that the user can see that we reached
-    // 100%. Otherwise, hide it immediately to avoid blocking the UI unnecessarily.
+    // Let people know that we have finished exporting to CSV, successfully or not.
+    // Note: it is up to them to decide how to handle this (e.g., if they show some progress, then they may want to
+    //       delay hiding it so that people can see that we reached 100%).
 
-    if (successfulExport) {
-      await common.sleep(LONG_DELAY);
-    }
-
-    opencorMessage.hide();
+    emit('csvExport', { type: 'finished', success: successfulExport });
   }
 };
 
