@@ -1,6 +1,7 @@
 {
   "extends": "@vue/tsconfig/tsconfig.dom.json",
   "compilerOptions": {
+    "noUncheckedIndexedAccess": true,
     "types": ["bun"]
   },
   "include": ["**/*.js", "**/*.ts", "**/*.vue", "package.json"],
