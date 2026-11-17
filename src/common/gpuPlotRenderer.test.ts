@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import {
   createGpuPlotRenderer,
   type IGpuPlotArea,
+  type IGpuPlotPointCounts,
   type IGpuPlotRenderer,
   type IGpuPlotTrace,
   isPrecise
@@ -504,6 +505,30 @@ describe('render()', () => {
     expect(calls(fake, 'drawArraysInstanced')).toEqual([['TRIANGLE_STRIP', 0, 4, 1]]);
   });
 
+  it('returns the number of points that it rendered and drew', () => {
+    const { renderer } = createRenderer();
+    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 123, nbOfDrawnPoints: 45 };
+    const items = [
+      { trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 },
+      { trace: traceWith(renderer, 7), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 1 },
+      { trace: traceWith(renderer, 1), color: '#f00', alpha: 1, lineWidth: 1, markerSize: 1 },
+      { trace: traceWith(renderer, 11), color: '#f00', alpha: 0, lineWidth: 1, markerSize: 1 }
+    ];
+
+    // Our first trace only has a line, our second trace only has markers, our third trace only has a marker (since it
+    // has a single point), and our fourth trace is not rendered (since it is fully transparent).
+
+    renderer.render(createFakeTarget().context, AREA, items, pointCounts);
+
+    expect(pointCounts).toEqual({ nbOfPoints: 13, nbOfDrawnPoints: 13 });
+
+    // Our counts are reset every time we render.
+
+    renderer.render(createFakeTarget().context, AREA, [], pointCounts);
+
+    expect(pointCounts).toEqual({ nbOfPoints: 0, nbOfDrawnPoints: 0 });
+  });
+
   it('renders nothing for an empty plotting area', () => {
     const { renderer, fake } = createRenderer();
     const target = createFakeTarget();
@@ -640,9 +665,14 @@ describe('level of detail', () => {
 
     fake.calls.length = 0;
 
-    renderer.render(createFakeTarget().context, LOD_AREA, [
-      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
-    ]);
+    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+
+    renderer.render(
+      createFakeTarget().context,
+      LOD_AREA,
+      [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }],
+      pointCounts
+    );
 
     // Our selected points get uploaded to a separate buffer, from which our line gets drawn.
 
@@ -654,6 +684,7 @@ describe('level of detail', () => {
     expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
     expect(calls(fake, 'bindBuffer')).toContainEqual(['ARRAY_BUFFER', fake.buffers[1]]);
     expect(lineDraws(fake)).toEqual([[0, nbOfSelectedPoints - 1]]);
+    expect(pointCounts).toEqual({ nbOfPoints: NB_OF_POINTS, nbOfDrawnPoints: nbOfSelectedPoints });
   });
 
   it('only draws the visible points of a trace with many sorted points', () => {
@@ -669,15 +700,21 @@ describe('level of detail', () => {
     // points just before and after them, i.e. 103 points (and therefore 102 segments), which is too few for our level
     // of detail to be used.
 
-    renderer.render(createFakeTarget().context, { ...LOD_AREA, xMin: 1000, xMax: 1100 }, [
-      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 2 }
-    ]);
+    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+
+    renderer.render(
+      createFakeTarget().context,
+      { ...LOD_AREA, xMin: 1000, xMax: 1100 },
+      [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 2 }],
+      pointCounts
+    );
 
     expect(fake.buffers.length).toBe(1);
     expect(lineDraws(fake)).toEqual([
       [998, 102],
       [998, 103]
     ]);
+    expect(pointCounts).toEqual({ nbOfPoints: NB_OF_POINTS, nbOfDrawnPoints: 103 });
 
     // Without a line, our level of detail is not used either, even if all of our points are visible.
 

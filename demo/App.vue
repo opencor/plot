@@ -68,6 +68,7 @@
         <span v-if="csvExportStatus">{{ csvExportStatus }}</span>
         <span>{{ fps }} FPS</span>
         <span>Drawn using: {{ activeRenderers }}</span>
+        <span>Drawn points: {{ drawnPoints }}</span>
       </span>
     </header>
     <main class="demo-main" :style="gridStyle">
@@ -131,6 +132,10 @@ const customContextMenu = vue.ref<boolean>(false);
 
 const formatNumber = (value: number): string => {
   return value.toLocaleString('en');
+};
+
+const percentage = (ratio: number): string => {
+  return ratio.toLocaleString('en', { style: 'percent', maximumSignificantDigits: 2 });
 };
 
 const instanceTheme = (index: number): PlotTheme => {
@@ -212,8 +217,9 @@ const gridStyle = vue.computed(() => {
   };
 });
 
-// Our frame rate and the renderer(s) that our instances actually use to draw their traces, which we update twice a
-// second (rather than reactively, which would be costly with many instances).
+// Our frame rate, the renderer(s) that our instances actually use to draw their traces, and the number of points that
+// they actually draw compared to their number of points (i.e. without level of detail), which we update twice a second
+// (rather than reactively, which would be costly with many instances).
 
 const ACTIVE_RENDERER_NAMES: Record<PlotActiveRenderer, string> = {
   canvas: 'Canvas 2D',
@@ -224,16 +230,26 @@ const FPS_UPDATE_INTERVAL = 500;
 
 const fps = vue.ref<number>(0);
 const activeRenderers = vue.ref<string>('');
+const drawnPoints = vue.ref<string>('');
 let fpsFrameId = 0;
 
-const updateActiveRenderers = (): void => {
+const updateDrawingStatus = (): void => {
   const counts = new Map<PlotActiveRenderer, number>();
+  let nbOfPoints = 0;
+  let nbOfDrawnPoints = 0;
 
   for (const plot of plotRefs.slice(0, datasets.value.length)) {
     if (plot) {
+      const pointCounts = plot.pointCounts();
+
       counts.set(plot.activeRenderer, (counts.get(plot.activeRenderer) ?? 0) + 1);
+
+      nbOfPoints += pointCounts.nbOfPoints;
+      nbOfDrawnPoints += pointCounts.nbOfDrawnPoints;
     }
   }
+
+  drawnPoints.value = `${formatNumber(nbOfDrawnPoints)} of ${formatNumber(nbOfPoints)}${nbOfPoints ? ` (${percentage(nbOfDrawnPoints / nbOfPoints)})` : ''}`;
 
   activeRenderers.value =
     counts.size === 1
@@ -253,7 +269,7 @@ vue.onMounted(() => {
       nbOfFrames = 0;
       startTime = time;
 
-      updateActiveRenderers();
+      updateDrawingStatus();
     }
 
     fpsFrameId = requestAnimationFrame(onFrame);

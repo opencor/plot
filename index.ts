@@ -18,6 +18,7 @@ export type {
   IPlotCsvExportStartedEvent,
   IPlotData,
   IPlotMargins,
+  IPlotPointCounts,
   IPlotTrace
 } from './src/widgets/PlotWidget.vue';
 export { default, default as OpenCORPlot } from './src/widgets/PlotWidget.vue';

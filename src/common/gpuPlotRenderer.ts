@@ -392,11 +392,24 @@ export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean =>
 // Note: we only ever need one renderer (see Note #1 above), i.e. gpuPlotRenderer below, but being able to create one
 //       means that our tests can each use their own renderer.
 
+export interface IGpuPlotPointCounts {
+  // The number of points that got rendered, i.e. the total number of points of our traces and the number of them that
+  // actually got drawn (see Note #7 above).
+
+  nbOfPoints: number;
+  nbOfDrawnPoints: number;
+}
+
 export interface IGpuPlotRenderer {
   isAvailable: () => boolean;
   onRestored: (listener: () => void) => () => void;
   createTrace: () => IGpuPlotTrace;
-  render: (target: CanvasRenderingContext2D, area: IGpuPlotArea, items: IGpuPlotItem[]) => boolean;
+  render: (
+    target: CanvasRenderingContext2D,
+    area: IGpuPlotArea,
+    items: IGpuPlotItem[],
+    pointCounts?: IGpuPlotPointCounts
+  ) => boolean;
 }
 
 let uploadBuffer = new Float32Array(0);
@@ -801,10 +814,23 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     return res;
   };
 
-  const render = (target: CanvasRenderingContext2D, area: IGpuPlotArea, items: IGpuPlotItem[]): boolean => {
-    // Render the given items on the given canvas, within the given plotting area, and return whether we could.
-    // Note: like uPlot (and our SVG export, see svgDocument() in PlotWidget.vue), our traces are clipped to our
-    //       plotting area extended by half their line width, while our markers are clipped to our plotting area.
+  const render = (
+    target: CanvasRenderingContext2D,
+    area: IGpuPlotArea,
+    items: IGpuPlotItem[],
+    pointCounts?: IGpuPlotPointCounts
+  ): boolean => {
+    // Render the given items on the given canvas, within the given plotting area, and return whether we could. If
+    // requested, also return the number of points that we rendered and drew.
+    // Note #1: like uPlot (and our SVG export, see svgDocument() in PlotWidget.vue), our traces are clipped to our
+    //          plotting area extended by half their line width, while our markers are clipped to our plotting area.
+    // Note #2: the number of points that we drew for a trace is the number of points of its line or of its markers,
+    //          whichever is bigger.
+
+    if (pointCounts) {
+      pointCounts.nbOfPoints = 0;
+      pointCounts.nbOfDrawnPoints = 0;
+    }
 
     if (!isAvailable() || !gl || !canvas || !resources) {
       return false;
@@ -944,8 +970,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       );
 
       const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(context, area, item.lineWidth);
+      let nbOfDrawnPoints = 0;
 
       if (lineBuffer && lineEnd - lineStart > 1 && item.lineWidth > 0) {
+        nbOfDrawnPoints = lineEnd - lineStart;
+
         const offset = lineStart * BYTES_PER_POINT;
 
         context.bindBuffer(context.ARRAY_BUFFER, lineBuffer);
@@ -964,6 +993,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       }
 
       if (item.markerSize > 0 && end > start) {
+        nbOfDrawnPoints = Math.max(nbOfDrawnPoints, end - start);
+
         const offset = start * BYTES_PER_POINT;
 
         context.bindBuffer(context.ARRAY_BUFFER, buffer);
@@ -977,6 +1008,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       context.disableVertexAttribArray(segmentProgram.point0);
       context.disableVertexAttribArray(segmentProgram.point1);
       context.bindBuffer(context.ARRAY_BUFFER, null);
+
+      if (pointCounts) {
+        pointCounts.nbOfPoints += count;
+        pointCounts.nbOfDrawnPoints += nbOfDrawnPoints;
+      }
 
       // Composite our trace using its colour and opacity.
 

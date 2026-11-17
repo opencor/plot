@@ -157,6 +157,7 @@ import * as common from '../common/common';
 import {
   gpuPlotRenderer,
   type IGpuPlotItem,
+  type IGpuPlotPointCounts,
   type IGpuPlotTrace,
   isPrecise as isGpuPlotPrecise
 } from '../common/gpuPlotRenderer';
@@ -221,6 +222,15 @@ export type PlotTheme = 'system' | 'light' | 'dark';
 
 export type PlotRenderer = 'auto' | 'canvas' | 'webgl';
 export type PlotActiveRenderer = 'canvas' | 'webgl' | 'none';
+
+// The number of points of our visible traces and the number of them that actually got drawn the last time our plot got
+// drawn, i.e. how much drawing only the points that are needed for our traces to look the same helps (see
+// pointCounts()). This is mainly meant for testing and benchmarking.
+
+export interface IPlotPointCounts {
+  nbOfPoints: number; // Number of points of our visible traces.
+  nbOfDrawnPoints: number; // Number of those points that actually got drawn.
+}
 
 // Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
 // customContextMenu), so that it can be shown instead. Its items are those of our context menu (including their state,
@@ -361,6 +371,42 @@ const contextMenuHidden = (): void => {
   onContextMenuHide();
 };
 
+const pointCounts = (): IPlotPointCounts => {
+  // Return the number of points of our visible traces and the number of them that actually got drawn the last time our
+  // plot got drawn (see IPlotPointCounts).
+  // Note #1: this is not reactive since it would otherwise trigger a Vue update every time our plot gets drawn (e.g.,
+  //          while zooming or panning), i.e. it is meant to be polled.
+  // Note #2: with Canvas 2D, all the markers of a trace get drawn, if it has some (see markerPath()).
+
+  if (frameRenderer === 'webgl') {
+    return { ...gpuPointCounts };
+  }
+
+  const res: IPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+
+  if (!plot) {
+    return res;
+  }
+
+  for (let seriesIndex = 1; seriesIndex < plot.series.length; ++seriesIndex) {
+    const [xValues, yValues] = seriesData(plot, seriesIndex) ?? [];
+
+    if (!plot.series[seriesIndex]?.show || !xValues || !yValues) {
+      continue;
+    }
+
+    const nbOfPoints = Math.min(xValues.length, yValues.length);
+
+    res.nbOfPoints += nbOfPoints;
+
+    if (frameRenderer === 'canvas') {
+      res.nbOfDrawnPoints += hasMarkers(xValues, yValues) ? nbOfPoints : (canvasDrawnPoints[seriesIndex - 1] ?? 0);
+    }
+  }
+
+  return res;
+};
+
 // The renderer that we actually used to draw our traces the last time our plot got drawn (see prepareFrame()).
 
 const activeRenderer = vue.ref<PlotActiveRenderer>('canvas');
@@ -368,6 +414,7 @@ const activeRenderer = vue.ref<PlotActiveRenderer>('canvas');
 defineExpose({
   activeRenderer: vue.readonly(activeRenderer),
   contextMenuHidden,
+  pointCounts,
   resetMargins,
   resize
 });
@@ -4242,17 +4289,44 @@ const linearPath = (
   drawColumn();
 };
 
+// The number of points that we drew for each of our traces the last time that we built its path using Canvas 2D (see
+// linearPaths() and pointCounts()).
+
+let canvasDrawnPoints: number[] = [];
+
 const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, index0: number, index1: number) => {
   // Use our linear path builder for our trace (see linearPath()), unless our traces are not drawn using Canvas 2D (see
-  // prepareFrame()).
+  // prepareFrame()), keeping track of the number of points that we draw.
 
   const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
   const area = pathArea(u);
   const stroke = new Path2D();
+  let nbOfDrawnPoints = 0;
 
   if (xValues && yValues && area && frameRenderer === 'canvas') {
-    linearPath(stroke, xValues, yValues, index0, index1, area);
+    linearPath(
+      {
+        moveTo: (x: number, y: number): void => {
+          ++nbOfDrawnPoints;
+
+          stroke.moveTo(x, y);
+        },
+        lineTo: (x: number, y: number): void => {
+          ++nbOfDrawnPoints;
+
+          stroke.lineTo(x, y);
+        },
+        arc: stroke.arc.bind(stroke)
+      },
+      xValues,
+      yValues,
+      index0,
+      index1,
+      area
+    );
   }
+
+  canvasDrawnPoints[seriesIndex - 1] = nbOfDrawnPoints;
 
   return { stroke, fill: null, clip: null, flags: 0 };
 };
@@ -4314,6 +4388,7 @@ const markerPaths: uPlot.Series.Points.PathBuilder = (u: uPlot, seriesIndex: num
 
 let frameRenderer: PlotActiveRenderer = 'canvas';
 let gpuFrameItems: IGpuPlotItem[] = [];
+const gpuPointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
 let gpuTraces: IGpuPlotTrace[] = [];
 let warnedAboutWebGlNotBeingAvailable = false;
 
@@ -4412,7 +4487,7 @@ const drawGpuTraces = (u: uPlot): void => {
 
   const area = pathArea(u);
 
-  if (area && gpuPlotRenderer.render(u.ctx, area, gpuFrameItems)) {
+  if (area && gpuPlotRenderer.render(u.ctx, area, gpuFrameItems, gpuPointCounts)) {
     return;
   }
 
