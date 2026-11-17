@@ -63,13 +63,13 @@
 import * as vue from 'vue';
 
 import OpenCORPlot, {
-  type GraphPanelActiveRenderer,
-  type GraphPanelRenderer,
-  type GraphPanelTheme,
+  type PlotActiveRenderer,
+  type PlotRenderer,
+  type PlotTheme,
   type IContextMenuItem,
-  type IGraphPanelContextMenuEvent,
-  type IGraphPanelCsvExportEvent,
-  type IGraphPanelData
+  type IPlotContextMenuEvent,
+  type IPlotCsvExportEvent,
+  type IPlotData
 } from '../index';
 
 // Some data to plot, i.e. a few traces with 1,001 points each.
@@ -86,7 +86,7 @@ const trace = (name: string, color: string, f: (x: number) => number) => {
   return { name, xValue: 'x', x, yValue: name, y: x.map(f), color };
 };
 
-const data: IGraphPanelData = {
+const data: IPlotData = {
   xAxisTitle: 'Time (<i>s</i>)',
   yAxisTitle: 'Signal',
   traces: [
@@ -98,14 +98,14 @@ const data: IGraphPanelData = {
 
 // Our options.
 
-const theme = vue.ref<GraphPanelTheme>('system');
-const renderer = vue.ref<GraphPanelRenderer>('auto');
+const theme = vue.ref<PlotTheme>('system');
+const renderer = vue.ref<PlotRenderer>('auto');
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
 
 // The renderer that our plot actually uses to draw its traces.
 
-const ACTIVE_RENDERER_NAMES: Record<GraphPanelActiveRenderer, string> = {
+const ACTIVE_RENDERER_NAMES: Record<PlotActiveRenderer, string> = {
   canvas: 'Canvas 2D',
   webgl: 'WebGL',
   none: 'nothing (WebGL is not available)'
@@ -115,7 +115,7 @@ const ACTIVE_RENDERER_NAMES: Record<GraphPanelActiveRenderer, string> = {
 
 const csvExportStatus = vue.ref<string>('');
 
-const onCsvExport = (event: IGraphPanelCsvExportEvent): void => {
+const onCsvExport = (event: IPlotCsvExportEvent): void => {
   if (event.type === 'started') {
     csvExportStatus.value = 'Exporting to CSV...';
   } else if (event.type === 'progress') {
@@ -152,7 +152,7 @@ const flattenedItems = (items: IContextMenuItem[], prefix: string = ''): ICustom
   });
 };
 
-const onContextMenu = async (event: IGraphPanelContextMenuEvent): Promise<void> => {
+const onContextMenu = async (event: IPlotContextMenuEvent): Promise<void> => {
   customMenu.value = { x: event.clientX, y: event.clientY, items: flattenedItems(event.items) };
 
   window.addEventListener('blur', hideCustomMenu);

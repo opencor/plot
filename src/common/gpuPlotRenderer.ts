@@ -1,13 +1,13 @@
 import { isContinuationOf } from './traceValues';
 
-// A GPU-based renderer for the traces (and their markers) of our graph panels (see GraphPanelWidget.vue).
-// Note #1: we use WebGL 2 and a single WebGL context, which is shared by all our graph panels. Indeed, browsers only
+// A GPU-based renderer for the traces (and their markers) of our plots (see PlotWidget.vue).
+// Note #1: we use WebGL 2 and a single WebGL context, which is shared by all our plots. Indeed, browsers only
 //          allow a limited number of WebGL contexts at any given time (e.g., 16 in Chromium), so we cannot have one per
-//          graph panel. So, our WebGL context renders to a canvas that is not part of our document, and what gets
-//          rendered for a graph panel is then copied to its own (2D) canvas (see render()).
+//          plot. So, our WebGL context renders to a canvas that is not part of our document, and what gets rendered for
+//          a plot is then copied to its own (2D) canvas (see render()).
 // Note #2: WebGPU is the future, but we use WebGL 2 since not all browsers are optimised for WebGPU yet. Indeed, like
 //          what gets rendered using WebGL (see Note #1), what gets rendered using WebGPU would need to be copied to the
-//          (2D) canvas of a graph panel. Chrome does this fast, but Safari is somewhat slow and Firefox is even slower.
+//          (2D) canvas of a plot. Chrome does this fast, but Safari is somewhat slow and Firefox is even slower.
 // Note #3: the data of a trace is kept on the GPU, as 32-bit floats relative to an origin (i.e. its first finite
 //          point), so that we keep as much precision as possible, and it only gets uploaded (again) when it changes.
 //          Also, if the data of a trace is a view of the same buffer as before and is at least as long as before, then
@@ -22,9 +22,9 @@ import { isContinuationOf } from './traceValues';
 //          trace. This means that a trace is drawn as a single shape (like a stroked path on a 2D canvas), i.e. its
 //          overlapping segments don't make it darker (e.g., when a trace is faded).
 // Note #5: we may lose our WebGL context (e.g., if the GPU gets reset), in which case we are not available (so that our
-//          graph panels can fall back to drawing their traces themselves) until our context gets restored, at which
-//          point our listeners (i.e. our graph panels) get notified, so that they can redraw themselves (which will get
-//          their data uploaded again).
+//          plots can fall back to drawing their traces themselves) until our context gets restored, at which point our
+//          listeners (i.e. our plots) get notified, so that they can redraw themselves (which will get their data
+//          uploaded again).
 // Note #6: a non-finite value (i.e. a gap in a trace) is uploaded as GAP_VALUE, and a segment with an end beyond
 //          GAP_THRESHOLD is discarded by our vertex shader, so that a gap in the data is drawn as a gap in the trace.
 
@@ -459,8 +459,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   const isAvailable = (): boolean => {
     // Return whether we can be used.
     // Note: our context may be lost before we get told about it (see initialise()), in which case we are not available
-    //       either. Otherwise, a graph panel that failed to render its traces because of it (see render()) and that
-    //       redraws itself straight away would keep trying (and failing) to use us until we get told about it.
+    //       either. Otherwise, a plot that failed to render its traces because of it (see render()) and that redraws
+    //       itself straight away would keep trying (and failing) to use us until we get told about it.
 
     initialise();
 
@@ -645,7 +645,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
   const render = (target: CanvasRenderingContext2D, area: IGpuPlotArea, items: IGpuPlotItem[]): boolean => {
     // Render the given items on the given canvas, within the given plotting area, and return whether we could.
-    // Note: like uPlot (and our SVG export, see svgDocument() in GraphPanelWidget.vue), our traces are clipped to our
+    // Note: like uPlot (and our SVG export, see svgDocument() in PlotWidget.vue), our traces are clipped to our
     //       plotting area extended by half their line width, while our markers are clipped to our plotting area.
 
     if (!isAvailable() || !gl || !canvas || !resources) {
@@ -666,8 +666,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     }
 
     // Make sure that our canvas and coverage texture are big enough.
-    // Note: we only ever grow them, so that we don't keep reallocating them when rendering graph panels of different
-    //       sizes.
+    // Note: we only ever grow them, so that we don't keep reallocating them when rendering plots of different sizes.
 
     const sharedCanvas = canvas;
 

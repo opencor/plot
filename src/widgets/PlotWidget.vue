@@ -1,5 +1,5 @@
 <template>
-  <div class="opencor-plot-theme graph-panel" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
+  <div class="opencor-plot-theme plot-widget" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
     <div ref="mainDivRef" class="plot-panel"
       :style="{
         backgroundColor: themeColors.background,
@@ -165,7 +165,7 @@ import '../assets/theme.css';
 
 import ContextMenuWidget, { type IContextMenuItem } from './ContextMenuWidget.vue';
 
-export interface IGraphPanelPlotTrace {
+export interface IPlotTrace {
   name: string;
   traceId?: string;
   xValue: string;
@@ -177,50 +177,50 @@ export interface IGraphPanelPlotTrace {
   runLabel?: string;
 }
 
-export interface IGraphPanelData {
+export interface IPlotData {
   xAxisTitle?: string;
   yAxisTitle?: string;
   xAxisRange?: [number, number];
   yAxisRange?: [number, number];
-  traces: IGraphPanelPlotTrace[];
+  traces: IPlotTrace[];
 }
 
-export interface IGraphPanelMargins {
+export interface IPlotMargins {
   left: number;
   right: number;
 }
 
 // CSV export events, which can be used to show the progress of an export to CSV (see exportToCsv()).
 
-export interface IGraphPanelCsvExportStartedEvent {
+export interface IPlotCsvExportStartedEvent {
   type: 'started';
 }
 
-export interface IGraphPanelCsvExportProgressEvent {
+export interface IPlotCsvExportProgressEvent {
   type: 'progress';
   percent: number;
 }
 
-export interface IGraphPanelCsvExportFinishedEvent {
+export interface IPlotCsvExportFinishedEvent {
   type: 'finished';
   success: boolean;
 }
 
-export type IGraphPanelCsvExportEvent =
-  | IGraphPanelCsvExportStartedEvent
-  | IGraphPanelCsvExportProgressEvent
-  | IGraphPanelCsvExportFinishedEvent;
+export type IPlotCsvExportEvent =
+  | IPlotCsvExportStartedEvent
+  | IPlotCsvExportProgressEvent
+  | IPlotCsvExportFinishedEvent;
 
 // Our theme, i.e. whether we should use whatever mode the system uses, light mode, or dark mode.
 
-export type GraphPanelTheme = 'system' | 'light' | 'dark';
+export type PlotTheme = 'system' | 'light' | 'dark';
 
 // Our renderer, i.e. what we should use to draw our traces: WebGL, if available, or Canvas 2D otherwise ('auto'), WebGL
 // ('webgl'), or Canvas 2D ('canvas'). Also, the renderer that we actually used to draw our traces the last time our
 // plot got drawn ('none' meaning that they couldn't be drawn, see Note #3 below).
 
-export type GraphPanelRenderer = 'auto' | 'canvas' | 'webgl';
-export type GraphPanelActiveRenderer = 'canvas' | 'webgl' | 'none';
+export type PlotRenderer = 'auto' | 'canvas' | 'webgl';
+export type PlotActiveRenderer = 'canvas' | 'webgl' | 'none';
 
 // Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
 // customContextMenu), so that it can be shown instead. Its items are those of our context menu (including their state,
@@ -230,7 +230,7 @@ export type GraphPanelActiveRenderer = 'canvas' | 'webgl' | 'none';
 //       Whether our context menu was requested using the mouse or the keyboard, contextMenuHidden() should be called
 //       once our custom context menu has been hidden, so that our plot can get the keyboard focus back, if needed.
 
-export interface IGraphPanelContextMenuEvent {
+export interface IPlotContextMenuEvent {
   clientX: number;
   clientY: number;
   usingKeyboard: boolean;
@@ -240,21 +240,21 @@ export interface IGraphPanelContextMenuEvent {
 // Note #1: appendTo is where our overlays (i.e. our context menu, hover tooltip, and drag cursor) get appended, which
 //          is our document's body by default.
 // Note #2: customContextMenu is whether we should emit a contextMenu event rather than show our own context menu (see
-//          IGraphPanelContextMenuEvent).
-// Note #3: renderer is what we should use to draw our traces (see GraphPanelRenderer). With 'webgl', our traces don't
+//          IPlotContextMenuEvent).
+// Note #3: renderer is what we should use to draw our traces (see PlotRenderer). With 'webgl', our traces don't
 //          get drawn if WebGL is not available (e.g., if it is disabled or if our WebGL context is lost), but they get
 //          drawn using Canvas 2D if WebGL is not precise enough for our current ranges (e.g., if we are zoomed in a
 //          lot), since they would otherwise visibly be in the wrong place (see isPrecise() in gpuPlotRenderer.ts).
 
 const props = withDefaults(
   defineProps<{
-    data: IGraphPanelData;
-    margins?: IGraphPanelMargins;
+    data: IPlotData;
+    margins?: IPlotMargins;
     showLegend?: boolean;
-    theme?: GraphPanelTheme;
+    theme?: PlotTheme;
     appendTo?: HTMLElement | string;
     customContextMenu?: boolean;
-    renderer?: GraphPanelRenderer;
+    renderer?: PlotRenderer;
   }>(),
   {
     showLegend: true,
@@ -265,9 +265,9 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{
-  contextMenu: [event: IGraphPanelContextMenuEvent];
-  csvExport: [event: IGraphPanelCsvExportEvent];
-  marginsUpdated: [newMargins: IGraphPanelMargins];
+  contextMenu: [event: IPlotContextMenuEvent];
+  csvExport: [event: IPlotCsvExportEvent];
+  marginsUpdated: [newMargins: IPlotMargins];
 }>();
 
 // Some constants (in CSS pixels, where relevant).
@@ -356,14 +356,14 @@ const resetMargins = (): void => {
 };
 
 const contextMenuHidden = (): void => {
-  // Our custom context menu has been hidden (see IGraphPanelContextMenuEvent), so do as if it was our context menu.
+  // Our custom context menu has been hidden (see IPlotContextMenuEvent), so do as if it was our context menu.
 
   onContextMenuHide();
 };
 
 // The renderer that we actually used to draw our traces the last time our plot got drawn (see prepareFrame()).
 
-const activeRenderer = vue.ref<GraphPanelActiveRenderer>('canvas');
+const activeRenderer = vue.ref<PlotActiveRenderer>('canvas');
 
 defineExpose({
   activeRenderer: vue.readonly(activeRenderer),
@@ -388,7 +388,7 @@ let isUnmounted = false;
 let stopTrackingContainerSize: (() => void) | undefined;
 let stopTrackingLegendSize: (() => void) | undefined;
 let marginsUpdatePending = false;
-let trackedMargins: IGraphPanelMargins | undefined;
+let trackedMargins: IPlotMargins | undefined;
 
 // Whether our axes are logarithmic, which can be changed using our context menu (see contextMenuItems and Logarithmic
 // axes below).
@@ -452,7 +452,7 @@ const resolvedColor = (color: string): string => {
 // Our traces' visibility, which we keep track of across data updates (e.g., while a simulation is running or when runs
 // get tracked in interactive mode).
 
-const traceVisibilityKey = (trace: IGraphPanelPlotTrace): string | undefined => {
+const traceVisibilityKey = (trace: IPlotTrace): string | undefined => {
   // Return a key that identifies the given trace across data updates, if possible.
 
   if (trace.traceId) {
@@ -539,12 +539,12 @@ const onLegendFocus = (event: FocusEvent, index: number): void => {
 
 vue.watch(
   () => props.data.traces,
-  (traces: IGraphPanelPlotTrace[], oldTraces: IGraphPanelPlotTrace[] | undefined) => {
+  (traces: IPlotTrace[], oldTraces: IPlotTrace[] | undefined) => {
     // Keep the visibility of the traces that we already know about and make any new trace visible.
 
     const previousVisibilityByKey = new Map<string, boolean>();
 
-    (oldTraces ?? []).forEach((trace: IGraphPanelPlotTrace, index: number) => {
+    (oldTraces ?? []).forEach((trace: IPlotTrace, index: number) => {
       const key = traceVisibilityKey(trace);
 
       if (key) {
@@ -552,7 +552,7 @@ vue.watch(
       }
     });
 
-    traceVisibilities.value = traces.map((trace: IGraphPanelPlotTrace) => {
+    traceVisibilities.value = traces.map((trace: IPlotTrace) => {
       const key = traceVisibilityKey(trace);
 
       return key ? (previousVisibilityByKey.get(key) ?? true) : true;
@@ -584,7 +584,7 @@ const legendItems = vue.computed<ILegendItem[]>(() => {
   const visibilities = traceVisibilities.value;
 
   return props.data.traces
-    .map((trace: IGraphPanelPlotTrace, index: number) => ({
+    .map((trace: IPlotTrace, index: number) => ({
       index,
       color: trace.color,
       name: trace.name,
@@ -874,7 +874,7 @@ let contextMenuShownUsingKeyboard = false;
 
 const showContextMenu = (event: MouseEvent): void => {
   // Show our context menu or, if we are to use a custom context menu, let people know that it should be shown (see
-  // IGraphPanelContextMenuEvent).
+  // IPlotContextMenuEvent).
 
   if (props.customContextMenu) {
     emit('contextMenu', {
@@ -1494,7 +1494,7 @@ const exportToCsv = async (): Promise<void> => {
     //          rather than in the order in which they are drawn (e.g., the live run last, so that it is drawn on top of
     //          the other runs).
 
-    const groups: { trace: IGraphPanelPlotTrace; traces: IGraphPanelPlotTrace[] }[] = [];
+    const groups: { trace: IPlotTrace; traces: IPlotTrace[] }[] = [];
 
     for (const legendItem of legendItems.value) {
       const trace = props.data.traces[legendItem.index];
@@ -3214,7 +3214,7 @@ const preventContextMenu = (event: MouseEvent): void => {
 
 const KEYBOARD_PAN_FRACTION = 0.1; // Fraction of the length of an axis by which it gets panned using an arrow key.
 
-const plotDescriptionId = `graph-panel-description-${vue.useId()}`;
+const plotDescriptionId = `plot-description-${vue.useId()}`;
 
 const plainText = (html: string | undefined): string => {
   // Return the text of the given HTML (e.g., "<i>I<sub>K,r</sub></i>" becomes "IK,r").
@@ -3823,8 +3823,8 @@ const rightMargin = (): number => {
 };
 
 // Update our margins asynchronously, i.e. after our plot has been laid out and we know how much space it needs for its
-// axes and legend. This allows us to share our margins with other instances of GraphPanelWidget, so that they can align
-// their plots with ours.
+// axes and legend. This allows us to share our margins with other instances of PlotWidget, so that they can align their
+// plots with ours.
 // Note #1: we emit our natural margins (i.e. the margins that we need) whenever they change, and get given some shared
 //          margins (i.e. the biggest natural margins of all our sibling panels), which we then use (see yAxisSize() and
 //          rightMargin()).
@@ -3836,10 +3836,7 @@ const rightMargin = (): number => {
 //          last X tick label (see rightMargin()). The (unlikely) cost is that a panel which last X tick label needs
 //          more room than our shared right margin has a narrower plotting area than its sibling panels.
 
-const sameMargins = (
-  firstMargins: IGraphPanelMargins | undefined,
-  secondMargins: IGraphPanelMargins | undefined
-): boolean => {
+const sameMargins = (firstMargins: IPlotMargins | undefined, secondMargins: IPlotMargins | undefined): boolean => {
   return (
     firstMargins !== undefined &&
     secondMargins !== undefined &&
@@ -4297,7 +4294,7 @@ const markerPaths: uPlot.Series.Points.PathBuilder = (u: uPlot, seriesIndex: num
 //          using Canvas 2D and not.
 // Note #3: our exports don't rely on what gets drawn (see svgDocument()), so they are not affected.
 
-let frameRenderer: GraphPanelActiveRenderer = 'canvas';
+let frameRenderer: PlotActiveRenderer = 'canvas';
 let gpuFrameItems: IGpuPlotItem[] = [];
 let gpuTraces: IGpuPlotTrace[] = [];
 let warnedAboutWebGlNotBeingAvailable = false;
@@ -4799,7 +4796,7 @@ const plotData = (): uPlot.AlignedData => {
   // Note #2: uPlot needs at least one series, hence we use an empty one if we have no traces.
 
   const traces = props.data.traces;
-  const data = traces.map((trace: IGraphPanelPlotTrace) => [plotValues('x', trace.x), plotValues('y', trace.y)]);
+  const data = traces.map((trace: IPlotTrace) => [plotValues('x', trace.x), plotValues('y', trace.y)]);
 
   sortedXValues = data.map(([xValues]) => isSorted(xValues as Float64Array));
 
@@ -5210,7 +5207,7 @@ vue.watch(
 
 vue.watch(
   () => props.margins,
-  (newMargins: IGraphPanelMargins | undefined, oldMargins: IGraphPanelMargins | undefined) => {
+  (newMargins: IPlotMargins | undefined, oldMargins: IPlotMargins | undefined) => {
     // Nothing to do if our margins haven't actually changed (e.g., if we were given a new object with the same values).
 
     if (sameMargins(newMargins, oldMargins)) {
@@ -5268,16 +5265,16 @@ vue.watch(
    *       consumer's styles are, including our hover tooltip (which may be appended elsewhere, see appendTo).
    */
 
-  .graph-panel,
-  .graph-panel *,
-  .graph-panel ::before,
-  .graph-panel ::after,
+  .plot-widget,
+  .plot-widget *,
+  .plot-widget ::before,
+  .plot-widget ::after,
   .hover-tooltip,
   .hover-tooltip * {
     box-sizing: border-box;
   }
 
-  .graph-panel {
+  .plot-widget {
     display: flex;
     flex-direction: row;
     height: 100%;

@@ -5,10 +5,10 @@
  * Note #1: we use our theme's CSS variables (i.e. --theme-*) rather than our public ones, since the latter would
  *          otherwise always have our default values (since they would be defined on our own elements and therefore
  *          override those inherited from our ancestors).
- * Note #2: our theme is applied to the root element of our graph panel (see GraphPanelWidget.vue) and to our overlays
- *          (e.g., our hover tooltip and our context menu, see ContextMenuWidget.vue), since they may be appended
- *          elsewhere (see appendTo) and would therefore not inherit our theme. This is also why our theme is not
- *          scoped to a particular component.
+ * Note #2: our theme is applied to the root element of our plot (see PlotWidget.vue) and to our overlays (e.g., our
+ *          hover tooltip and our context menu, see ContextMenuWidget.vue), since they may be appended elsewhere (see
+ *          appendTo) and would therefore not inherit our theme. This is also why our theme is not scoped to a
+ *          particular component.
  */
 
 .opencor-plot-theme {

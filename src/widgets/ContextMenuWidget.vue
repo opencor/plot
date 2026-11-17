@@ -464,7 +464,7 @@ defineExpose({ hide, show });
 <style scoped>
   /**
    * Note #1: our context menu looks like OpenCOR's context menus, i.e. PrimeVue's (Aura) context menus with OpenCOR's
-   *          customisations. Our hover tooltip is shown below it (see .hover-tooltip in GraphPanelWidget.vue).
+   *          customisations. Our hover tooltip is shown below it (see .hover-tooltip in PlotWidget.vue).
    * Note #2: our elements are sized using their border box, whatever the consumer's styles are (e.g., the width of our
    *          chevron includes its padding).
    */

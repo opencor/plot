@@ -1,4 +1,4 @@
-// Incremental processing of the values of our traces (see GraphPanelWidget.vue and gpuPlotRenderer.ts).
+// Incremental processing of the values of our traces (see PlotWidget.vue and gpuPlotRenderer.ts).
 // Note: our data gets may get updated often (e.g., many times a second while a simulation is running), and typically
 //       with a few more values each time. So, rather than process all of our values every time, we check whether they
 //       are a continuation of the values we processed before (i.e. a view of the same buffer, from the same offset, and
