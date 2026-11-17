@@ -6,7 +6,8 @@
 //          columns through their first and last points. So, rather than draw all the points of a pixel column, we only
 //          need to draw (in order) its first point, the points with its minimum and maximum Y values, and its last
 //          point (this is known as M4 aggregation). This means that drawing a trace costs O(number of pixel columns)
-//          rather than O(number of points). (Our columns don't have to be pixel columns, though.)
+//          rather than O(number of points). (Our columns don't have to be pixel columns, e.g. our GPU plot renderer
+//          uses several columns per pixel, see Note #7 of gpuPlotRenderer.ts.)
 // Note #2: to find the points with the minimum and maximum Y values of a range of points quickly, we keep, for each
 //          block of BLOCK_SIZE points, the index of its point with the minimum (and maximum) Y value, and whether it
 //          has a non-finite Y value (i.e. a gap). We then do the same for each block of BLOCK_SIZE blocks, and so on.

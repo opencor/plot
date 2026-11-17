@@ -7,6 +7,7 @@ import {
   type IGpuPlotTrace,
   isPrecise
 } from './gpuPlotRenderer';
+import * as levelOfDetail from './levelOfDetail';
 
 // A fake WebGL 2 context, since there is no WebGL in our test environment.
 // Note #1: our fake context records the calls that are made to it, and keeps track of the contents of its buffers, so
@@ -565,6 +566,323 @@ describe('render()', () => {
     fake.lost = true;
 
     expect(renderer.render(createFakeTarget().context, AREA, items)).toBe(false);
+  });
+});
+
+// Level of detail.
+
+describe('level of detail', () => {
+  // Our plotting area has 400 columns (i.e. 4 per pixel), so our level of detail gets used for a trace with more than
+  // 3,200 (visible) points (see LOD_COLUMNS_PER_PIXEL and LOD_MIN_POINTS_PER_COLUMN in gpuPlotRenderer.ts).
+
+  const NB_OF_POINTS = 10000;
+  const LOD_AREA: IGpuPlotArea = { ...AREA, xMin: 1, xMax: NB_OF_POINTS };
+
+  const values = (nbOfPoints: number, phase: number = 0): [xValues: Float64Array, yValues: Float64Array] => {
+    // Return some points with sorted X values (from 1 to the given number of points) and Y values that go up and down,
+    // so that our level of detail only selects some of them.
+    // Note: our first point is not the origin, so that we can check that our points are uploaded relative to it.
+
+    const xValues = Float64Array.from({ length: nbOfPoints }, (_value, i) => i + 1);
+
+    return [xValues, xValues.map((x) => Math.sin(0.37 * x + phase) + 0.001 * x + 5)];
+  };
+
+  const selectedPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
+    // Return the points that our level of detail selects for the given values and plotting area, relative to their
+    // first point and as 32-bit floats, i.e. what our renderer should upload.
+
+    const nbOfPoints = Math.min(xValues.length, yValues.length);
+    const lod = levelOfDetail.create();
+
+    levelOfDetail.update(lod, xValues, yValues, nbOfPoints);
+
+    const [start, end] = levelOfDetail.visibleRange(xValues, nbOfPoints, area.xMin, area.xMax);
+    const selection = levelOfDetail.selectPoints(
+      lod,
+      xValues,
+      yValues,
+      start,
+      end,
+      area.xMin,
+      area.xMax,
+      4 * area.width
+    ) as levelOfDetail.ISelection;
+
+    return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) => [
+      Math.fround((xValues[index] as number) - (xValues[0] as number)),
+      Math.fround((yValues[index] as number) - (yValues[0] as number))
+    ]);
+  };
+
+  const bufferPoints = (fake: IFakeContext, buffer: IFakeObject | undefined, nbOfValues: number): number[] => {
+    // Return the given number of values that were uploaded to the given buffer.
+
+    return Array.from((fake.data.get(buffer as IFakeObject) as Float32Array).subarray(0, nbOfValues));
+  };
+
+  const lineDraws = (fake: IFakeContext): unknown[][] => {
+    // Return the offset (in points) of our line and its number of segments, for each line that was drawn.
+
+    const offsets = calls(fake, 'vertexAttribPointer')
+      .filter(([index]) => index === 0)
+      .map(([, , , , , offset]) => (offset as number) / 8);
+
+    return calls(fake, 'drawArraysInstanced').map(([, , , nbOfInstances], i) => [offsets[i], nbOfInstances]);
+  };
+
+  it('only draws the points that are needed for the line of a trace with many sorted points to look the same', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+    ]);
+
+    // Our selected points get uploaded to a separate buffer, from which our line gets drawn.
+
+    const expectedPoints = selectedPoints(xValues, yValues, LOD_AREA);
+    const nbOfSelectedPoints = expectedPoints.length / 2;
+
+    expect(nbOfSelectedPoints).toBeLessThan(NB_OF_POINTS / 2);
+    expect(fake.buffers.length).toBe(2);
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+    expect(calls(fake, 'bindBuffer')).toContainEqual(['ARRAY_BUFFER', fake.buffers[1]]);
+    expect(lineDraws(fake)).toEqual([[0, nbOfSelectedPoints - 1]]);
+  });
+
+  it('only draws the visible points of a trace with many sorted points', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    // Our visible points are those with an X value from 1,000 to 1,100 (i.e. from index 999 to 1,099), as well as the
+    // points just before and after them, i.e. 103 points (and therefore 102 segments), which is too few for our level
+    // of detail to be used.
+
+    renderer.render(createFakeTarget().context, { ...LOD_AREA, xMin: 1000, xMax: 1100 }, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 2 }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([
+      [998, 102],
+      [998, 103]
+    ]);
+
+    // Without a line, our level of detail is not used either, even if all of our points are visible.
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 0, markerSize: 2 }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS]]);
+  });
+
+  it('draws all the points of a trace with many unsorted points', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    xValues[5000] = 1;
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS - 1]]);
+  });
+
+  it('draws all the visible points of a trace with a gap among them', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    yValues[5000] = Number.NaN;
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS - 1]]);
+  });
+
+  it('only uploads the part of its selection that changed', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [allXValues, allYValues] = values(2 * NB_OF_POINTS);
+    const area = { ...LOD_AREA, xMax: 2 * NB_OF_POINTS };
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+    const selectionUploads = (): unknown[][] => {
+      return calls(fake, 'bufferSubData').map(([, offset, , , length]) => [(offset as number) / 8, length]);
+    };
+
+    trace.update(allXValues.subarray(0, NB_OF_POINTS), allYValues.subarray(0, NB_OF_POINTS));
+    renderer.render(createFakeTarget().context, area, items);
+
+    // Add some points (i.e. a continuation of our previous ones), so that only the end of our selection changes.
+
+    const newXValues = allXValues.subarray(0, NB_OF_POINTS + 100);
+    const newYValues = allYValues.subarray(0, NB_OF_POINTS + 100);
+    const expectedPoints = selectedPoints(newXValues, newYValues, area);
+
+    trace.update(newXValues, newYValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, area, items);
+
+    const [[firstChanged, nbOfValues]] = selectionUploads() as [[number, number]];
+
+    expect(firstChanged).toBeGreaterThan(0);
+    expect(nbOfValues).toBe(expectedPoints.length - 2 * firstChanged);
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+
+    // If nothing changed, then only the points of our last column get selected and uploaded again (since our last
+    // point is always assumed to have possibly changed, see Note #5 of levelOfDetail.ts).
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, area, items);
+
+    const [[lastColumnStart, lastColumnNbOfValues]] = selectionUploads() as [[number, number]];
+
+    expect(lastColumnNbOfValues).toBeLessThanOrEqual(8);
+    expect(2 * lastColumnStart + lastColumnNbOfValues).toBe(expectedPoints.length);
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+  });
+
+  it('selects (and uploads) its points again when they change', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+
+    trace.update(...values(NB_OF_POINTS));
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    // New points (i.e. not a continuation of our previous ones), with the same X values but different Y values.
+
+    const [xValues, yValues] = values(NB_OF_POINTS, 1);
+    const expectedPoints = selectedPoints(xValues, yValues, LOD_AREA);
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+  });
+
+  it('replaces its selection buffer when it needs a bigger one, and deletes it when disposed of', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+    const widerArea = { ...LOD_AREA, width: 200 };
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    // A wider plotting area has more columns and therefore needs a bigger selection buffer, to which our selection
+    // gets uploaded in full.
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, widerArea, items);
+
+    const expectedPoints = selectedPoints(xValues, yValues, widerArea);
+
+    expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[1]]]);
+    expect(fake.buffers.length).toBe(3);
+    expect(calls(fake, 'bufferSubData').map(([, offset, , , length]) => [offset, length])).toEqual([
+      [0, expectedPoints.length]
+    ]);
+    expect(bufferPoints(fake, fake.buffers[2], expectedPoints.length)).toEqual(expectedPoints);
+
+    // Disposing of our trace deletes both its buffers.
+
+    fake.calls.length = 0;
+
+    trace.dispose();
+
+    expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[0]], [fake.buffers[2]]]);
+  });
+
+  it('uploads its selection in full again after its context got restored', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    fake.canvas?.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    fake.canvas?.dispatchEvent(new Event('webglcontextrestored'));
+
+    expect(renderer.isAvailable()).toBe(true);
+
+    // Our buffers belonged to our lost context, so new ones get created (without deleting our old ones) and our points
+    // and selection get uploaded to them in full.
+
+    fake.calls.length = 0;
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    const expectedPoints = selectedPoints(xValues, yValues, LOD_AREA);
+
+    expect(calls(fake, 'deleteBuffer')).toEqual([]);
+    expect(fake.buffers.length).toBe(4);
+    expect(bufferPoints(fake, fake.buffers[3], expectedPoints.length)).toEqual(expectedPoints);
+
+    // Disposing of our trace only deletes its new buffers.
+
+    fake.calls.length = 0;
+
+    trace.dispose();
+
+    expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[2]], [fake.buffers[3]]]);
+  });
+
+  it("doesn't delete the buffers of its lost context when disposed of", () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+
+    trace.update(...values(NB_OF_POINTS));
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+    ]);
+
+    fake.canvas?.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    fake.canvas?.dispatchEvent(new Event('webglcontextrestored'));
+
+    fake.calls.length = 0;
+
+    trace.dispose();
+
+    expect(fake.buffers.length).toBe(2);
+    expect(calls(fake, 'deleteBuffer')).toEqual([]);
   });
 });
 

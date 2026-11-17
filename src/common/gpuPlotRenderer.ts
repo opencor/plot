@@ -1,3 +1,4 @@
+import * as levelOfDetail from './levelOfDetail';
 import { isContinuationOf } from './traceValues';
 
 // A GPU-based renderer for the traces (and their markers) of our plots (see PlotWidget.vue).
@@ -27,6 +28,17 @@ import { isContinuationOf } from './traceValues';
 //          uploaded again).
 // Note #6: a non-finite value (i.e. a gap in a trace) is uploaded as GAP_VALUE, and a segment with an end beyond
 //          GAP_THRESHOLD is discarded by our vertex shader, so that a gap in the data is drawn as a gap in the trace.
+// Note #7: if the X values of a trace are sorted, then we only draw its visible points. Also, if it has many more
+//          visible points than there are columns (see below), then we only draw the points that are needed for its line
+//          to look the same (see levelOfDetail.ts), which we keep in a separate buffer. This means that drawing the
+//          line of a trace costs O(number of columns) rather than O(number of points). Also, if the X range is the same
+//          as before (e.g., while a simulation is running), then only the selection of the columns from the first
+//          point that may have changed gets updated and uploaded, i.e. drawing a few more points costs O(number of new
+//          points). The points of a column are not drawn exactly where they would be, but they are all within that
+//          column, so we use LOD_COLUMNS_PER_PIXEL columns per pixel, so that what we draw is within a quarter of a
+//          pixel of what we would otherwise draw (with one column per pixel, near-vertical edges could move by up to a
+//          pixel, which would be visible with antialiasing). Our markers, if any, are never reduced (since they
+//          wouldn't look the same otherwise), i.e. all of our visible markers get drawn.
 
 const GAP_VALUE = 3.0e38;
 const GAP_THRESHOLD = '1.0e38';
@@ -34,6 +46,8 @@ const FLOAT32_EPSILON = 2 ** -24; // Relative precision of a 32-bit float.
 const MAX_PRECISION_ERROR = 0.25; // Maximum position error that we accept (in canvas pixels), see isPrecise().
 const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a trace.
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
+const LOD_COLUMNS_PER_PIXEL = 4; // Number of columns per pixel for our level of detail (see Note #7 above).
+const LOD_MIN_POINTS_PER_COLUMN = 8; // Minimum number of visible points per column for our level of detail.
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -308,6 +322,14 @@ export interface IGpuPlotTrace {
   dispose: () => void;
 }
 
+interface IDrawnPoints {
+  start: number; // Index of the first point (included) of which we draw the marker.
+  end: number; // Index of the last point (excluded) of which we draw the marker.
+  lineBuffer: WebGLBuffer | null; // Buffer that contains the points of which we draw the line.
+  lineStart: number; // Index of the first point (included), in our line buffer, of which we draw the line.
+  lineEnd: number; // Index of the last point (excluded), in our line buffer, of which we draw the line.
+}
+
 interface IGpuPlotTraceInternals extends IGpuPlotTrace {
   buffer: () => WebGLBuffer | null;
   count: () => number;
@@ -315,6 +337,7 @@ interface IGpuPlotTraceInternals extends IGpuPlotTrace {
   originY: () => number;
   maxAbsX: () => number;
   maxAbsY: () => number;
+  drawnPoints: (context: WebGL2RenderingContext, area: IGpuPlotArea, lineWidth: number) => IDrawnPoints;
 }
 
 // Rendering.
@@ -377,6 +400,7 @@ export interface IGpuPlotRenderer {
 }
 
 let uploadBuffer = new Float32Array(0);
+let selectionUploadBuffer = new Float32Array(0);
 
 export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   let canvas: HTMLCanvasElement | null = null;
@@ -488,6 +512,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     let originY = 0;
     let maxAbsX = 0;
     let maxAbsY = 0;
+    let lod = levelOfDetail.create();
+    let selectionBuffer: WebGLBuffer | null = null;
+    let selectionBufferGeneration = -1;
+    let selectionBufferCapacity = 0;
 
     const update = (newXValues: Float64Array, newYValues: Float64Array): void => {
       if (!isAvailable() || !gl) {
@@ -515,6 +543,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
       xValues = newXValues;
       yValues = newYValues;
+
+      levelOfDetail.invalidate(lod, start);
 
       // Use the first finite point as our origin, if we are uploading all of our data.
 
@@ -582,11 +612,138 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         gl.deleteBuffer(buffer);
       }
 
+      if (selectionBuffer && gl && selectionBufferGeneration === generation) {
+        gl.deleteBuffer(selectionBuffer);
+      }
+
       buffer = null;
       capacity = 0;
       count = 0;
       xValues = undefined;
       yValues = undefined;
+      lod = levelOfDetail.create();
+      selectionBuffer = null;
+      selectionBufferCapacity = 0;
+    };
+
+    const uploadSelection = (
+      context: WebGL2RenderingContext,
+      selection: levelOfDetail.ISelection,
+      xs: Float64Array,
+      ys: Float64Array
+    ): WebGLBuffer | null => {
+      // Upload the given selection of our points (see Note #7 above), or rather the part of it that changed since we
+      // last uploaded it, and return the buffer that contains it.
+      // Note: we upload every selection that we make (see drawnPoints()), so the part of our selection that changed
+      //       since we last uploaded it is the part that changed since our previous selection.
+
+      let from = selection.firstChanged;
+
+      // Upload our selection in full if our buffer belongs to a lost context or if it is not big enough.
+
+      if (selectionBufferGeneration !== generation) {
+        selectionBuffer = null;
+        selectionBufferGeneration = generation;
+        selectionBufferCapacity = 0;
+      }
+
+      if (!selectionBuffer || selectionBufferCapacity < selection.indices.length) {
+        if (selectionBuffer) {
+          context.deleteBuffer(selectionBuffer);
+        }
+
+        selectionBuffer = context.createBuffer();
+        selectionBufferCapacity = selection.indices.length;
+
+        context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
+        context.bufferData(context.ARRAY_BUFFER, selectionBufferCapacity * BYTES_PER_POINT, context.DYNAMIC_DRAW);
+
+        from = 0;
+      }
+
+      // Convert and upload our (changed) selected points, which are all finite (since our X values are sorted and
+      // there is no gap).
+
+      const nbOfValues = 2 * (selection.nbOfPoints - from);
+
+      if (nbOfValues > 0) {
+        if (selectionUploadBuffer.length < nbOfValues) {
+          selectionUploadBuffer = new Float32Array(Math.max(nbOfValues, 2 * selectionUploadBuffer.length));
+        }
+
+        const values = selectionUploadBuffer;
+        const indices = selection.indices;
+        const xOrigin = originX;
+        const yOrigin = originY;
+
+        for (let i = from, j = 0; i < selection.nbOfPoints; ++i, j += 2) {
+          const index = indices[i] as number;
+
+          values[j] = (xs[index] as number) - xOrigin;
+          values[j + 1] = (ys[index] as number) - yOrigin;
+        }
+
+        context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
+        context.bufferSubData(context.ARRAY_BUFFER, from * BYTES_PER_POINT, values, 0, nbOfValues);
+        context.bindBuffer(context.ARRAY_BUFFER, null);
+      }
+
+      return selectionBuffer;
+    };
+
+    const drawnPoints = (context: WebGL2RenderingContext, area: IGpuPlotArea, lineWidth: number): IDrawnPoints => {
+      // Return the points that we need to draw for the given plotting area (see Note #7 above), i.e. all of our points,
+      // or only our visible points if our X values are sorted and, for our line, possibly only some of them.
+
+      const res: IDrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
+      const nbOfColumns = Math.max(1, Math.ceil(LOD_COLUMNS_PER_PIXEL * area.width));
+      const minNbOfPoints = LOD_MIN_POINTS_PER_COLUMN * nbOfColumns;
+
+      if (!xValues || !yValues || count <= minNbOfPoints) {
+        return res;
+      }
+
+      // Only draw our visible points, if our X values are sorted.
+      // Note: we update our level of detail lazily since it is only needed for traces with many points.
+
+      levelOfDetail.update(lod, xValues, yValues, count);
+
+      if (lod.sortedLength < count) {
+        return res;
+      }
+
+      [res.start, res.end] = levelOfDetail.visibleRange(xValues, count, area.xMin, area.xMax);
+
+      res.lineStart = res.start;
+      res.lineEnd = res.end;
+
+      // Only draw the points that are needed for our line to look the same, if we have many visible points (and no gap
+      // among them).
+
+      if (lineWidth <= 0 || res.end - res.start <= minNbOfPoints) {
+        return res;
+      }
+
+      const selection = levelOfDetail.selectPoints(
+        lod,
+        xValues,
+        yValues,
+        res.start,
+        res.end,
+        area.xMin,
+        area.xMax,
+        nbOfColumns
+      );
+
+      if (!selection) {
+        return res;
+      }
+
+      res.lineBuffer = uploadSelection(context, selection, xValues, yValues);
+      res.lineStart = 0;
+      res.lineEnd = selection.nbOfPoints;
+
+      return res;
     };
 
     const res: IGpuPlotTraceInternals = {
@@ -597,7 +754,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       originX: () => originX,
       originY: () => originY,
       maxAbsX: () => maxAbsX,
-      maxAbsY: () => maxAbsY
+      maxAbsY: () => maxAbsY,
+      drawnPoints
     };
 
     return res;
@@ -785,22 +943,35 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         areaBottom + 0.5 * item.lineWidth
       );
 
-      if (count > 1 && item.lineWidth > 0) {
-        context.bindBuffer(context.ARRAY_BUFFER, buffer);
+      const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(context, area, item.lineWidth);
+
+      if (lineBuffer && lineEnd - lineStart > 1 && item.lineWidth > 0) {
+        const offset = lineStart * BYTES_PER_POINT;
+
+        context.bindBuffer(context.ARRAY_BUFFER, lineBuffer);
         context.scissor(...traceScissor);
-        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, 0);
-        context.vertexAttribPointer(segmentProgram.point1, 2, context.FLOAT, false, BYTES_PER_POINT, BYTES_PER_POINT);
+        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
+        context.vertexAttribPointer(
+          segmentProgram.point1,
+          2,
+          context.FLOAT,
+          false,
+          BYTES_PER_POINT,
+          offset + BYTES_PER_POINT
+        );
         context.uniform1f(segmentProgram.radius, 0.5 * item.lineWidth);
-        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, count - 1);
+        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, lineEnd - lineStart - 1);
       }
 
-      if (item.markerSize > 0) {
+      if (item.markerSize > 0 && end > start) {
+        const offset = start * BYTES_PER_POINT;
+
         context.bindBuffer(context.ARRAY_BUFFER, buffer);
         context.scissor(...markersScissor);
-        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, 0);
-        context.vertexAttribPointer(segmentProgram.point1, 2, context.FLOAT, false, BYTES_PER_POINT, 0);
+        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
+        context.vertexAttribPointer(segmentProgram.point1, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
         context.uniform1f(segmentProgram.radius, 0.5 * item.markerSize);
-        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, count);
+        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, end - start);
       }
 
       context.disableVertexAttribArray(segmentProgram.point0);
