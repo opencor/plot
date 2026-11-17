@@ -47,7 +47,6 @@ const MAX_PRECISION_ERROR = 0.25; // Maximum position error that we accept (in c
 const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a trace.
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
 const LOD_COLUMNS_PER_PIXEL = 4; // Number of columns per pixel for our level of detail (see Note #7 above).
-const LOD_MIN_POINTS_PER_COLUMN = 8; // Minimum number of visible points per column for our level of detail.
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -710,7 +709,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
       const res: IDrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
       const nbOfColumns = Math.max(1, Math.ceil(LOD_COLUMNS_PER_PIXEL * area.width));
-      const minNbOfPoints = LOD_MIN_POINTS_PER_COLUMN * nbOfColumns;
+      const minNbOfPoints = levelOfDetail.MIN_POINTS_PER_COLUMN * nbOfColumns;
 
       if (!xValues || !yValues || count <= minNbOfPoints) {
         return res;

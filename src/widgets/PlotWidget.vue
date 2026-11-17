@@ -161,6 +161,8 @@ import {
   type IGpuPlotTrace,
   isPrecise as isGpuPlotPrecise
 } from '../common/gpuPlotRenderer';
+import * as levelOfDetail from '../common/levelOfDetail';
+import { isContinuationOf } from '../common/traceValues';
 
 import '../assets/theme.css';
 
@@ -4289,14 +4291,132 @@ const linearPath = (
   drawColumn();
 };
 
+// Level of detail for Canvas 2D.
+// Note #1: linearPath() only draws the first, minimum, maximum, and last points of each pixel column, but it still has
+//          to go through all the points of our trace to find them, i.e. it costs O(number of points). So, if the X
+//          values of our trace are sorted and it has many more visible points than there are pixel columns, then we
+//          first select those points using our level of detail (see levelOfDetail.ts), which costs O(number of pixel
+//          columns), and only give them to linearPath().
+// Note #2: our columns are our pixel columns (i.e. those of linearPath()), so our selected points include all the
+//          points that linearPath() would draw, i.e. our trace looks exactly the same.
+// Note #3: like our GPU plot renderer, we keep our level of detail up to date incrementally (see traceValues.ts).
+
+interface ICanvasTrace {
+  xValues: Float64Array | undefined; // X values for which our level of detail was last updated.
+  yValues: Float64Array | undefined; // Y values for which our level of detail was last updated.
+  count: number; // Number of points for which our level of detail was last updated.
+  lod: levelOfDetail.ILevelOfDetail; // Our level of detail.
+}
+
+interface ILinearPathPoints {
+  xValues: Float64Array; // X values of the points to give to linearPath().
+  yValues: Float64Array; // Y values of the points to give to linearPath().
+  index0: number; // Index of the first point (included) to give to linearPath().
+  index1: number; // Index of the last point (included) to give to linearPath().
+}
+
+let canvasTraces: ICanvasTrace[] = [];
+let canvasSelectionXValues = new Float64Array(0);
+let canvasSelectionYValues = new Float64Array(0);
+
+const linearPathPoints = (
+  seriesIndex: number,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  index0: number,
+  index1: number,
+  area: IPathArea
+): ILinearPathPoints => {
+  // Return the points of the given trace that linearPath() needs to go through (see Note #1 above).
+
+  const res: ILinearPathPoints = { xValues, yValues, index0, index1 };
+  const count = Math.min(xValues.length, yValues.length);
+  const nbOfColumns = Math.ceil(area.width) + 1;
+  const minNbOfPoints = levelOfDetail.MIN_POINTS_PER_COLUMN * nbOfColumns;
+  const xFactor = area.width / (area.xMax - area.xMin);
+
+  if (count <= minNbOfPoints || !(xFactor > 0) || !Number.isFinite(xFactor)) {
+    return res;
+  }
+
+  // Update our level of detail, from the first point that may have changed.
+
+  canvasTraces[seriesIndex - 1] ??= {
+    xValues: undefined,
+    yValues: undefined,
+    count: 0,
+    lod: levelOfDetail.create()
+  };
+
+  const trace = canvasTraces[seriesIndex - 1] as ICanvasTrace;
+  const from =
+    trace.count > 0 && isContinuationOf(xValues, trace.xValues) && isContinuationOf(yValues, trace.yValues)
+      ? Math.min(trace.count - 1, count)
+      : 0;
+
+  levelOfDetail.invalidate(trace.lod, from);
+  levelOfDetail.update(trace.lod, xValues, yValues, count);
+
+  trace.xValues = xValues;
+  trace.yValues = yValues;
+  trace.count = count;
+
+  // Only go through our visible points, if our X values are sorted.
+
+  if (trace.lod.sortedLength < count) {
+    return res;
+  }
+
+  const [start, end] = levelOfDetail.visibleRange(xValues, count, area.xMin, area.xMax);
+
+  res.index0 = start;
+  res.index1 = end - 1;
+
+  // Only go through the points that linearPath() would draw, if we have many visible points (and no gap among them).
+  // Note: linearPath() rounds the X position of a point to determine its pixel column, so our columns start half a
+  //       pixel before the pixel column of the left edge of our plotting area.
+
+  if (end - start <= minNbOfPoints) {
+    return res;
+  }
+
+  const xMin = area.xMin + (Math.round(area.left) - 0.5 - area.left) / xFactor;
+  const xMax = xMin + nbOfColumns / xFactor;
+  const selection = levelOfDetail.selectPoints(trace.lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
+
+  if (!selection) {
+    return res;
+  }
+
+  if (canvasSelectionXValues.length < selection.nbOfPoints) {
+    canvasSelectionXValues = new Float64Array(selection.indices.length);
+    canvasSelectionYValues = new Float64Array(selection.indices.length);
+  }
+
+  for (let i = 0; i < selection.nbOfPoints; ++i) {
+    const index = selection.indices[i] as number;
+
+    canvasSelectionXValues[i] = xValues[index] as number;
+    canvasSelectionYValues[i] = yValues[index] as number;
+  }
+
+  return {
+    xValues: canvasSelectionXValues,
+    yValues: canvasSelectionYValues,
+    index0: 0,
+    index1: selection.nbOfPoints - 1
+  };
+};
+
 // The number of points that we drew for each of our traces the last time that we built its path using Canvas 2D (see
 // linearPaths() and pointCounts()).
 
 let canvasDrawnPoints: number[] = [];
 
 const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, index0: number, index1: number) => {
-  // Use our linear path builder for our trace (see linearPath()), unless our traces are not drawn using Canvas 2D (see
-  // prepareFrame()), keeping track of the number of points that we draw.
+  // Use our linear path builder for our trace (see linearPath()), and our level of detail (see linearPathPoints()),
+  // unless our traces are not drawn using Canvas 2D (see prepareFrame()), keeping track of the number of points that we
+  // draw.
 
   const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
   const area = pathArea(u);
@@ -4304,6 +4424,8 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
   let nbOfDrawnPoints = 0;
 
   if (xValues && yValues && area && frameRenderer === 'canvas') {
+    const points = linearPathPoints(seriesIndex, xValues, yValues, index0, index1, area);
+
     linearPath(
       {
         moveTo: (x: number, y: number): void => {
@@ -4318,10 +4440,10 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
         },
         arc: stroke.arc.bind(stroke)
       },
-      xValues,
-      yValues,
-      index0,
-      index1,
+      points.xValues,
+      points.yValues,
+      points.index0,
+      points.index1,
       area
     );
   }
@@ -4443,6 +4565,8 @@ const prepareFrame = (u: uPlot): void => {
   gpuFrameItems = [];
 
   disposeGpuTraces(u.series.length - 1);
+
+  canvasTraces = canvasTraces.slice(0, u.series.length - 1);
 
   if (props.renderer !== 'canvas') {
     if (gpuPlotRenderer.isAvailable()) {

@@ -27,6 +27,8 @@
 
 const BLOCK_SIZE = 16;
 
+export const MIN_POINTS_PER_COLUMN = 8; // Minimum number of (visible) points per column for us to be worth using.
+
 interface ILevel {
   min: Int32Array; // Index of the point with the minimum (finite) Y value of a block, or -1 if there is none.
   max: Int32Array; // Index of the point with the maximum (finite) Y value of a block, or -1 if there is none.
