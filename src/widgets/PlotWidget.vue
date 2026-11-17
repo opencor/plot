@@ -3355,20 +3355,35 @@ interface INumberFormat {
   exponent: number; // Common exponent (of an SI prefix), if any.
 }
 
+const MAX_NB_OF_SI_DECIMALS = 3; // Maximum number of decimals that a number with an SI prefix may need.
+
 const numberFormat = (dtick: number, maxEnd: number): INumberFormat => {
   // Determine the format of our tick labels from our tick spacing and from the end of our axis that is the furthest
   // away from zero.
+  // Note: unlike Plotly, we don't use an SI prefix if our number would then need more than a few decimals, which is
+  //       the case when our tick spacing is small compared to our values (e.g., "1,000,000,000.2" rather than
+  //       "1.0000000002B" when zoomed in on timestamps). We still use an exponent beyond our SI prefixes, though, since
+  //       our numbers would otherwise be too long.
 
   const rangeExponent = Math.floor(Math.log10(maxEnd) + 0.01);
+  const dtickExponent = Math.floor(Math.log10(dtick) + 0.01);
+  let exponent = 0;
+
+  if (Number.isFinite(rangeExponent) && Math.abs(rangeExponent) > 3) {
+    if (beyondSI(rangeExponent)) {
+      exponent = rangeExponent;
+    } else {
+      exponent = 3 * Math.round((rangeExponent - 1) / 3);
+
+      if (exponent - dtickExponent > MAX_NB_OF_SI_DECIMALS) {
+        exponent = 0;
+      }
+    }
+  }
 
   return {
-    tickRound: 2 - Math.floor(Math.log10(dtick) + 0.01),
-    exponent:
-      Number.isFinite(rangeExponent) && Math.abs(rangeExponent) > 3
-        ? beyondSI(rangeExponent)
-          ? rangeExponent
-          : 3 * Math.round((rangeExponent - 1) / 3)
-        : 0
+    tickRound: 2 - dtickExponent,
+    exponent
   };
 };
 
