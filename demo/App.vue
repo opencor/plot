@@ -80,10 +80,12 @@
         <input v-model="customContextMenu" type="checkbox" />
         Custom context menu
       </label>
+      <button type="button" :disabled="renderer === 'canvas' || webGlContextLost" @click="onLoseWebGlContext">Lose WebGL context</button>
       <span class="demo-status">
         <span v-if="dataStatus">{{ dataStatus }}</span>
         <span v-if="liveStatus">{{ liveStatus }}</span>
         <span v-if="csvExportStatus">{{ csvExportStatus }}</span>
+        <span v-if="webGlStatus">{{ webGlStatus }}</span>
         <span>{{ fps }} FPS</span>
         <span>Drawn using: {{ activeRenderers }}</span>
         <span>Drawn points: {{ drawnPoints }}</span>
@@ -130,6 +132,7 @@ import OpenCORPlot, {
   type PlotTheme
 } from '../index';
 import { DATA_KINDS, type DataKind, plotData } from './data';
+import { loseWebGlContext, restoreWebGlContext } from './webgl';
 
 type PlotInstance = InstanceType<typeof OpenCORPlot>;
 
@@ -435,9 +438,49 @@ vue.onMounted(() => {
 
 vue.onBeforeUnmount(() => {
   cancelAnimationFrame(fpsFrameId);
+  clearTimeout(webGlTimeoutId);
 
   stopLive();
 });
+
+// Loss of our WebGL context, which we restore after a while, so that we can see our instances fall back to drawing
+// their traces using Canvas 2D (or not at all if our renderer is WebGL) and then use WebGL again (see webgl.ts).
+
+const WEBGL_CONTEXT_LOSS_DURATION = 3000; // Duration (in milliseconds) for which we lose our WebGL context.
+const WEBGL_STATUS_DURATION = 2000; // Duration (in milliseconds) for which we show that our WebGL context is restored.
+
+const webGlContextLost = vue.ref<boolean>(false); // Whether we have lost our WebGL context.
+const webGlStatus = vue.ref<string>(''); // Status of our WebGL context, if we have lost it or just restored it.
+let webGlTimeoutId: ReturnType<typeof setTimeout> | undefined; // Id of our timeout to restore or clear our status.
+
+const onLoseWebGlContext = (): void => {
+  // Lose our WebGL context, if it has been created (i.e. if WebGL has been used), and restore it after a while.
+
+  clearTimeout(webGlTimeoutId);
+
+  if (!loseWebGlContext()) {
+    webGlStatus.value = 'WebGL is not used';
+    webGlTimeoutId = setTimeout(() => {
+      webGlStatus.value = '';
+    }, WEBGL_STATUS_DURATION);
+
+    return;
+  }
+
+  webGlContextLost.value = true;
+  webGlStatus.value = `WebGL context lost (restoring it in ${WEBGL_CONTEXT_LOSS_DURATION / 1000} s)`;
+
+  webGlTimeoutId = setTimeout(() => {
+    restoreWebGlContext();
+
+    webGlContextLost.value = false;
+    webGlStatus.value = 'WebGL context restored';
+
+    webGlTimeoutId = setTimeout(() => {
+      webGlStatus.value = '';
+    }, WEBGL_STATUS_DURATION);
+  }, WEBGL_CONTEXT_LOSS_DURATION);
+};
 
 // CSV export progress.
 
@@ -549,7 +592,8 @@ const onWindowPointerDown = (event: PointerEvent): void => {
     align-items: center;
   }
 
-  .demo-header select {
+  .demo-header select,
+  .demo-header button {
     padding: 0.125rem 0.25rem;
     font: inherit;
   }
