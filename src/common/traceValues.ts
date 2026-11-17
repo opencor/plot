@@ -1,5 +1,3 @@
-import type * as math from './math';
-
 // Incremental processing of the values of our traces (see GraphPanelWidget.vue and gpuPlotRenderer.ts).
 // Note: our data gets may get updated often (e.g., many times a second while a simulation is running), and typically
 //       with a few more values each time. So, rather than process all of our values every time, we check whether they
@@ -8,7 +6,7 @@ import type * as math from './math';
 //       that gets appended to, with its last value retrieved again). This means that processing N new values costs
 //       O(N) rather than O(number of values).
 
-export const isContinuationOf = (values: math.FloatArray, previousValues: math.FloatArray | undefined): boolean => {
+export const isContinuationOf = (values: Float64Array, previousValues: Float64Array | undefined): boolean => {
   return (
     previousValues !== undefined &&
     values.buffer === previousValues.buffer &&
@@ -30,7 +28,7 @@ export const isContinuationOf = (values: math.FloatArray, previousValues: math.F
 //          variables since V8 cannot keep the variables of a closure in registers.
 
 export interface IValuesStatistics {
-  values: math.FloatArray; // The values for which we have statistics.
+  values: Float64Array; // The values for which we have statistics.
   prefixLength: number; // Number of values (i.e. all but the last one) covered by our prefix statistics.
   prefixMin: number; // Minimum of the finite values of our prefix (+Infinity if there are none).
   prefixMax: number; // Maximum of the finite values of our prefix (-Infinity if there are none).
@@ -41,7 +39,7 @@ export interface IValuesStatistics {
 }
 
 const scanValues = (
-  values: math.FloatArray,
+  values: Float64Array,
   start: number,
   end: number,
   sortedLength: number
@@ -115,7 +113,7 @@ const scanValues = (
   return [min, max, newSortedLength];
 };
 
-export const valuesStatistics = (values: math.FloatArray, previous?: IValuesStatistics): IValuesStatistics => {
+export const valuesStatistics = (values: Float64Array, previous?: IValuesStatistics): IValuesStatistics => {
   // Return the statistics of the given values, given the statistics of their previous values, if any.
 
   const continuation = previous !== undefined && isContinuationOf(values, previous.values);
@@ -165,12 +163,12 @@ export const valuesStatistics = (values: math.FloatArray, previous?: IValuesStat
 // Note #3: a non-positive value has no logarithm, so it becomes NaN (i.e. a gap in a trace).
 
 export interface ILogValues {
-  source: math.FloatArray; // The values of which we have the logarithm.
+  source: Float64Array; // The values of which we have the logarithm.
   buffer: Float64Array; // The buffer in which we keep the logarithm of our source values (and, later on, of new ones).
-  values: math.FloatArray; // The logarithm of our source values, i.e. a view of our buffer.
+  values: Float64Array; // The logarithm of our source values, i.e. a view of our buffer.
 }
 
-export const logValues = (values: math.FloatArray, previous?: ILogValues): ILogValues => {
+export const logValues = (values: Float64Array, previous?: ILogValues): ILogValues => {
   // Return the logarithm of the given values, given the logarithm of their previous values, if any.
 
   const nbOfValues = values.length;

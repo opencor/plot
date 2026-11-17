@@ -153,7 +153,6 @@ import * as vue from 'vue';
 
 import 'uplot/dist/uPlot.min.css';
 
-import * as colors from '../../common/colors';
 import * as common from '../../common/common';
 import {
   gpuPlotRenderer,
@@ -161,8 +160,6 @@ import {
   type IGpuPlotTrace,
   isPrecise as isGpuPlotPrecise
 } from '../../common/gpuPlotRenderer';
-import { NO_DELAY } from '../../common/constants';
-import * as math from '../../common/math';
 
 import '../../assets/theme.css';
 
@@ -172,9 +169,9 @@ export interface IGraphPanelPlotTrace {
   name: string;
   traceId?: string;
   xValue: string;
-  x: math.FloatArray;
+  x: Float64Array;
   yValue: string;
-  y: math.FloatArray;
+  y: Float64Array;
   color: string;
   legendRank?: number;
   runLabel?: string;
@@ -449,7 +446,7 @@ const themeColors: IThemeColors = {
 // are defined (rather than on our document).
 
 const resolvedColor = (color: string): string => {
-  return colors.cssColor(color, mainDivRef.value ?? document.documentElement);
+  return common.cssColor(color, mainDivRef.value ?? document.documentElement);
 };
 
 // Our traces' visibility, which we keep track of across data updates (e.g., while a simulation is running or when runs
@@ -1435,7 +1432,7 @@ const exportToImage = async (format: ImageFormat): Promise<void> => {
 // Note: a CSV field must be quoted if it contains a comma, a double quote, or a line break, in which case any double
 //       quote must be doubled (see RFC 4180).
 
-const sameValues = (values1: math.FloatArray, values2: math.FloatArray): boolean => {
+const sameValues = (values1: Float64Array, values2: Float64Array): boolean => {
   if (values1 === values2) {
     return true;
   }
@@ -1566,7 +1563,7 @@ const exportToCsv = async (): Promise<void> => {
       if ((row + 1) % chunkSize === 0 || row + 1 === nbOfRows) {
         emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
 
-        await common.sleep(NO_DELAY);
+        await common.sleep(common.NO_DELAY);
       }
     }
 
@@ -1597,13 +1594,13 @@ const exportToCsv = async (): Promise<void> => {
 type AxisKey = 'x' | 'y';
 type Range = [number, number];
 
-const seriesData = (u: uPlot, seriesIndex: number): [math.FloatArray, math.FloatArray] | undefined => {
+const seriesData = (u: uPlot, seriesIndex: number): [Float64Array, Float64Array] | undefined => {
   // Return the X and Y values of the given series.
 
-  return (u.data as unknown as [null, ...[math.FloatArray, math.FloatArray][]])[seriesIndex] ?? undefined;
+  return (u.data as unknown as [null, ...[Float64Array, Float64Array][]])[seriesIndex] ?? undefined;
 };
 
-const hasMarkers = (xValues?: math.FloatArray, yValues?: math.FloatArray): boolean => {
+const hasMarkers = (xValues?: Float64Array, yValues?: Float64Array): boolean => {
   // Like Plotly, a trace with fewer than 20 points also has markers.
 
   const nbOfPoints = xValues && yValues ? Math.min(xValues.length, yValues.length) : 0;
@@ -4018,8 +4015,8 @@ const drawZeroLines = (u: uPlot): void => {
 
 const linearPath = (
   path: IPath,
-  xValues: math.FloatArray,
-  yValues: math.FloatArray,
+  xValues: Float64Array,
+  yValues: Float64Array,
   index0: number,
   index1: number,
   area: IPathArea
@@ -4245,7 +4242,7 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
   return { stroke, fill: null, clip: null, flags: 0 };
 };
 
-const markerPath = (path: IPath, xValues: math.FloatArray, yValues: math.FloatArray, area: IPathArea): void => {
+const markerPath = (path: IPath, xValues: Float64Array, yValues: Float64Array, area: IPathArea): void => {
   // Like Plotly, draw a marker for each point of our trace that has finite X and Y values.
 
   const { left, top, width, height, xMin, xMax, yMin, yMax } = area;
@@ -4463,7 +4460,7 @@ const hover = vue.shallowRef<IHover | null>(null);
 let hoverRafId: number | undefined;
 let sortedXValues: boolean[] = [];
 
-const lowerBound = (values: math.FloatArray, value: number, end: number): number => {
+const lowerBound = (values: Float64Array, value: number, end: number): number => {
   // Return the index of the first of the given (sorted) values (up to the given end index) that is not less than the
   // given value, or the given end index if there is none.
 
@@ -4497,8 +4494,8 @@ const formatHoverValue = (value: number): string => {
 };
 
 const hoveredIndex = (
-  xValues: math.FloatArray,
-  yValues: math.FloatArray,
+  xValues: Float64Array,
+  yValues: Float64Array,
   sorted: boolean,
   left: number,
   top: number,
@@ -4735,7 +4732,7 @@ const queueHoverUpdate = (): void => {
   });
 };
 
-const isSorted = (values: math.FloatArray): boolean => {
+const isSorted = (values: Float64Array): boolean => {
   // Return whether the given values are sorted in increasing order.
   // Note: we negate our comparison so that NaN values (for which all comparisons are false) mean unsorted values.
 
@@ -4773,7 +4770,7 @@ const actualValue = (axisKey: AxisKey, value: number): number => {
   return logAxes.value[axisKey] ? 10 ** value : value;
 };
 
-const plotValues = (axisKey: AxisKey, values: math.FloatArray): math.FloatArray => {
+const plotValues = (axisKey: AxisKey, values: Float64Array): Float64Array => {
   // Return the values that we plot for the given actual values along the given axis.
   // Note: this gets called for all our data whenever it gets updated (e.g., several times a second while a simulation
   //       is running), so rather than call plotValue() for each value (which would check whether our axis is
@@ -4804,7 +4801,7 @@ const plotData = (): uPlot.AlignedData => {
   const traces = props.data.traces;
   const data = traces.map((trace: IGraphPanelPlotTrace) => [plotValues('x', trace.x), plotValues('y', trace.y)]);
 
-  sortedXValues = data.map(([xValues]) => isSorted(xValues as math.FloatArray));
+  sortedXValues = data.map(([xValues]) => isSorted(xValues as Float64Array));
 
   return [
     null,

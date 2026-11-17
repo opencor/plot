@@ -1,4 +1,3 @@
-import type * as math from './math';
 import { isContinuationOf } from './traceValues';
 
 // A GPU-based renderer for the traces (and their markers) of our graph panels (see GraphPanelWidget.vue).
@@ -241,8 +240,8 @@ const createResources = (context: WebGL2RenderingContext): IResources => {
 // The conversion of the data of a trace to what we upload to the GPU (see Note #3 and Note #6 above).
 
 const pointsOrigin = (
-  xValues: math.FloatArray,
-  yValues: math.FloatArray,
+  xValues: Float64Array,
+  yValues: Float64Array,
   count: number
 ): [originX: number, originY: number] => {
   // Return the origin of the given points, i.e. their first finite point, if any.
@@ -260,8 +259,8 @@ const pointsOrigin = (
 };
 
 const convertPoints = (
-  xValues: math.FloatArray,
-  yValues: math.FloatArray,
+  xValues: Float64Array,
+  yValues: Float64Array,
   start: number,
   end: number,
   originX: number,
@@ -305,7 +304,7 @@ const convertPoints = (
 // A trace, i.e. its data on the GPU.
 
 export interface IGpuPlotTrace {
-  update: (xValues: math.FloatArray, yValues: math.FloatArray) => void;
+  update: (xValues: Float64Array, yValues: Float64Array) => void;
   dispose: () => void;
 }
 
@@ -483,14 +482,14 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     let bufferGeneration = -1;
     let capacity = 0;
     let count = 0;
-    let xValues: math.FloatArray | undefined;
-    let yValues: math.FloatArray | undefined;
+    let xValues: Float64Array | undefined;
+    let yValues: Float64Array | undefined;
     let originX = 0;
     let originY = 0;
     let maxAbsX = 0;
     let maxAbsY = 0;
 
-    const update = (newXValues: math.FloatArray, newYValues: math.FloatArray): void => {
+    const update = (newXValues: Float64Array, newYValues: Float64Array): void => {
       if (!isAvailable() || !gl) {
         return;
       }
