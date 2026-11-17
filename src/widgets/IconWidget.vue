@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { ICONS, type IconName } from '../../common/icons';
+import { ICONS, type IconName } from '../common/icons';
 
 // An icon (see icons.ts), which takes the colour of its text (i.e. currentcolor) and whose size is that of its text,
 // unless it is set by its parent (e.g., using a class).

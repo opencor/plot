@@ -6,7 +6,7 @@ export type {
   IContextMenuAction,
   IContextMenuItem,
   IContextMenuSeparator
-} from './src/components/widgets/ContextMenuWidget.vue';
+} from './src/widgets/ContextMenuWidget.vue';
 export type {
   GraphPanelActiveRenderer,
   GraphPanelRenderer,
@@ -19,5 +19,5 @@ export type {
   IGraphPanelData,
   IGraphPanelMargins,
   IGraphPanelPlotTrace
-} from './src/components/widgets/GraphPanelWidget.vue';
-export { default, default as OpenCORPlot } from './src/components/widgets/GraphPanelWidget.vue';
+} from './src/widgets/GraphPanelWidget.vue';
+export { default, default as OpenCORPlot } from './src/widgets/GraphPanelWidget.vue';

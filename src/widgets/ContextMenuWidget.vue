@@ -47,7 +47,7 @@
 <script setup lang="ts">
 import * as vue from 'vue';
 
-import type { IconName } from '../../common/icons';
+import type { IconName } from '../common/icons';
 
 // A context menu, which looks like the context menus of OpenCOR (which are PrimeVue context menus) and behaves like
 // them, i.e. it:

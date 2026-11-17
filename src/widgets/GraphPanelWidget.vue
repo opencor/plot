@@ -153,15 +153,15 @@ import * as vue from 'vue';
 
 import 'uplot/dist/uPlot.min.css';
 
-import * as common from '../../common/common';
+import * as common from '../common/common';
 import {
   gpuPlotRenderer,
   type IGpuPlotItem,
   type IGpuPlotTrace,
   isPrecise as isGpuPlotPrecise
-} from '../../common/gpuPlotRenderer';
+} from '../common/gpuPlotRenderer';
 
-import '../../assets/theme.css';
+import '../assets/theme.css';
 
 import ContextMenuWidget, { type IContextMenuItem } from './ContextMenuWidget.vue';
 

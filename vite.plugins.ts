@@ -8,6 +8,6 @@ import vueComponentsPlugin from 'unplugin-vue-components/vite';
 
 export const componentsPlugin = () =>
   vueComponentsPlugin({
-    dirs: [path.join(import.meta.dirname, 'src/components')],
+    dirs: [path.join(import.meta.dirname, 'src/widgets')],
     dts: path.join(import.meta.dirname, 'components.d.ts')
   });
