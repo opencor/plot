@@ -1,6 +1,5 @@
 <template>
   <div class="opencor-plot-theme graph-panel" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
-    <div v-if="showMarker" class="marker" />
     <div ref="mainDivRef" class="plot-panel"
       :style="{
         backgroundColor: themeColors.background,
@@ -236,7 +235,6 @@ export interface IGraphPanelContextMenuEvent {
 const props = withDefaults(
   defineProps<{
     data: IGraphPanelData;
-    showMarker?: boolean;
     margins?: IGraphPanelMargins;
     showLegend?: boolean;
     theme?: GraphPanelTheme;
@@ -244,7 +242,6 @@ const props = withDefaults(
     customContextMenu?: boolean;
   }>(),
   {
-    showMarker: false,
     showLegend: true,
     theme: 'system',
     customContextMenu: false
@@ -5113,11 +5110,6 @@ vue.watch(
     display: flex;
     flex-direction: row;
     height: 100%;
-  }
-
-  .marker {
-    width: 0.1875rem;
-    background-color: var(--theme-primary-color);
   }
 
   .plot-panel {
