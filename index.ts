@@ -8,6 +8,8 @@ export type {
   IContextMenuSeparator
 } from './src/components/widgets/ContextMenuWidget.vue';
 export type {
+  GraphPanelActiveRenderer,
+  GraphPanelRenderer,
   GraphPanelTheme,
   IGraphPanelContextMenuEvent,
   IGraphPanelCsvExportEvent,

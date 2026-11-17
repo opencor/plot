@@ -263,8 +263,14 @@ describe('initialisation', () => {
     //       recreate our resources once our context gets restored.
 
     const { renderer, fake } = createRenderer(['compileShader', 'linkProgram']);
+    const consoleError = spyOn(console, 'error').mockImplementation(() => {});
 
     fake.lost = true;
+
+    expect(renderer.isAvailable()).toBe(false);
+    expect(consoleError).not.toHaveBeenCalled();
+
+    fake.lost = false;
 
     expect(renderer.isAvailable()).toBe(true);
   });
@@ -620,6 +626,16 @@ describe('context loss', () => {
     trace.dispose();
 
     expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[1]]]);
+  });
+
+  it('is not available as soon as its context is lost, even before being told about it', () => {
+    const { renderer, fake } = createRenderer();
+
+    expect(renderer.isAvailable()).toBe(true);
+
+    fake.lost = true;
+
+    expect(renderer.isAvailable()).toBe(false);
   });
 
   it('is not available if its context cannot be restored', () => {

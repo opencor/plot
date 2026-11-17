@@ -459,10 +459,13 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
   const isAvailable = (): boolean => {
     // Return whether we can be used.
+    // Note: our context may be lost before we get told about it (see initialise()), in which case we are not available
+    //       either. Otherwise, a graph panel that failed to render its traces because of it (see render()) and that
+    //       redraws itself straight away would keep trying (and failing) to use us until we get told about it.
 
     initialise();
 
-    return !!gl && !!resources && !contextLost;
+    return !!gl && !!resources && !contextLost && !gl.isContextLost();
   };
 
   const onRestored = (listener: () => void): (() => void) => {

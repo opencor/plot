@@ -11,6 +11,14 @@
         </select>
       </label>
       <label>
+        Renderer:
+        <select v-model="renderer">
+          <option value="auto">Auto</option>
+          <option value="canvas">Canvas 2D</option>
+          <option value="webgl">WebGL</option>
+        </select>
+      </label>
+      <label>
         <input v-model="showLegend" type="checkbox" />
         Legend
       </label>
@@ -18,13 +26,17 @@
         <input v-model="customContextMenu" type="checkbox" />
         Custom context menu
       </label>
-      <span v-if="csvExportStatus" class="demo-status">{{ csvExportStatus }}</span>
+      <span class="demo-status">
+        <span v-if="csvExportStatus">{{ csvExportStatus }}</span>
+        <span>Drawn using: {{ ACTIVE_RENDERER_NAMES[plotRef?.activeRenderer ?? 'none'] }}</span>
+      </span>
     </header>
     <main class="demo-main">
       <div class="demo-plot">
         <OpenCORPlot ref="plotRef"
           :data="data"
           :theme="theme"
+          :renderer="renderer"
           :showLegend="showLegend"
           :customContextMenu="customContextMenu"
           @contextMenu="onContextMenu"
@@ -51,6 +63,8 @@
 import * as vue from 'vue';
 
 import OpenCORPlot, {
+  type GraphPanelActiveRenderer,
+  type GraphPanelRenderer,
   type GraphPanelTheme,
   type IContextMenuItem,
   type IGraphPanelContextMenuEvent,
@@ -85,8 +99,17 @@ const data: IGraphPanelData = {
 // Our options.
 
 const theme = vue.ref<GraphPanelTheme>('system');
+const renderer = vue.ref<GraphPanelRenderer>('auto');
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
+
+// The renderer that our plot actually uses to draw its traces.
+
+const ACTIVE_RENDERER_NAMES: Record<GraphPanelActiveRenderer, string> = {
+  canvas: 'Canvas 2D',
+  webgl: 'WebGL',
+  none: 'nothing (WebGL is not available)'
+};
 
 // CSV export progress.
 
@@ -175,10 +198,15 @@ const onWindowPointerDown = (event: PointerEvent): void => {
 
   .demo-header {
     display: flex;
-    gap: 1.5rem;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
     align-items: center;
     padding: 0.75rem 1rem;
     border-bottom: 1px solid var(--demo-border);
+  }
+
+  .demo-header > * {
+    white-space: nowrap;
   }
 
   .demo-header h1 {
@@ -198,6 +226,8 @@ const onWindowPointerDown = (event: PointerEvent): void => {
   }
 
   .demo-status {
+    display: flex;
+    gap: 1.5rem;
     margin-left: auto;
   }
 

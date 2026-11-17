@@ -155,6 +155,12 @@ import 'uplot/dist/uPlot.min.css';
 
 import * as colors from '../../common/colors';
 import * as common from '../../common/common';
+import {
+  gpuPlotRenderer,
+  type IGpuPlotItem,
+  type IGpuPlotTrace,
+  isPrecise as isGpuPlotPrecise
+} from '../../common/gpuPlotRenderer';
 import { NO_DELAY } from '../../common/constants';
 import * as math from '../../common/math';
 
@@ -212,6 +218,13 @@ export type IGraphPanelCsvExportEvent =
 
 export type GraphPanelTheme = 'system' | 'light' | 'dark';
 
+// Our renderer, i.e. what we should use to draw our traces: WebGL, if available, or Canvas 2D otherwise ('auto'), WebGL
+// ('webgl'), or Canvas 2D ('canvas'). Also, the renderer that we actually used to draw our traces the last time our
+// plot got drawn ('none' meaning that they couldn't be drawn, see Note #3 below).
+
+export type GraphPanelRenderer = 'auto' | 'canvas' | 'webgl';
+export type GraphPanelActiveRenderer = 'canvas' | 'webgl' | 'none';
+
 // Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
 // customContextMenu), so that it can be shown instead. Its items are those of our context menu (including their state,
 // e.g. whether an axis is logarithmic, and their command, e.g. to zoom in around where our context menu was requested).
@@ -231,6 +244,10 @@ export interface IGraphPanelContextMenuEvent {
 //          is our document's body by default.
 // Note #2: customContextMenu is whether we should emit a contextMenu event rather than show our own context menu (see
 //          IGraphPanelContextMenuEvent).
+// Note #3: renderer is what we should use to draw our traces (see GraphPanelRenderer). With 'webgl', our traces don't
+//          get drawn if WebGL is not available (e.g., if it is disabled or if our WebGL context is lost), but they get
+//          drawn using Canvas 2D if WebGL is not precise enough for our current ranges (e.g., if we are zoomed in a
+//          lot), since they would otherwise visibly be in the wrong place (see isPrecise() in gpuPlotRenderer.ts).
 
 const props = withDefaults(
   defineProps<{
@@ -240,11 +257,13 @@ const props = withDefaults(
     theme?: GraphPanelTheme;
     appendTo?: HTMLElement | string;
     customContextMenu?: boolean;
+    renderer?: GraphPanelRenderer;
   }>(),
   {
     showLegend: true,
     theme: 'system',
-    customContextMenu: false
+    customContextMenu: false,
+    renderer: 'auto'
   }
 );
 
@@ -345,7 +364,12 @@ const contextMenuHidden = (): void => {
   onContextMenuHide();
 };
 
+// The renderer that we actually used to draw our traces the last time our plot got drawn (see prepareFrame()).
+
+const activeRenderer = vue.ref<GraphPanelActiveRenderer>('canvas');
+
 defineExpose({
+  activeRenderer: vue.readonly(activeRenderer),
   contextMenuHidden,
   resetMargins,
   resize
@@ -360,6 +384,7 @@ const rangeEditorRef = vue.shallowRef<HTMLElement | null>(null);
 const hoverTooltipRef = vue.shallowRef<HTMLElement | null>(null);
 const contextMenuRef = vue.ref<InstanceType<typeof ContextMenuWidget> | null>(null);
 let plot: uPlot | undefined;
+let stopListeningToGpuRestorations: (() => void) | undefined;
 let plotSignature: string | undefined;
 let isPlotOutdated = false;
 let isUnmounted = false;
@@ -4206,13 +4231,14 @@ const linearPath = (
 };
 
 const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, index0: number, index1: number) => {
-  // Use our linear path builder for our trace (see linearPath()).
+  // Use our linear path builder for our trace (see linearPath()), unless our traces are not drawn using Canvas 2D (see
+  // prepareFrame()).
 
   const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
   const area = pathArea(u);
   const stroke = new Path2D();
 
-  if (xValues && yValues && area) {
+  if (xValues && yValues && area && frameRenderer === 'canvas') {
     linearPath(stroke, xValues, yValues, index0, index1, area);
   }
 
@@ -4261,6 +4287,131 @@ const markerPaths: uPlot.Series.Points.PathBuilder = (u: uPlot, seriesIndex: num
   }
 
   return { stroke: null, fill, clip, flags: 0 };
+};
+
+// GPU rendering of our traces and markers (see gpuPlotRenderer.ts).
+// Note #1: when a frame gets drawn, we first determine how our traces are to be drawn (see prepareFrame()), i.e. using
+//          WebGL (if it is to be used, is available, and is precise enough for our current ranges, which it may not be
+//          if we are zoomed in a lot), using Canvas 2D, or not at all (if only WebGL is to be used, but it is not
+//          available). Unless Canvas 2D is to be used, our path builders don't build any path for uPlot to draw (see
+//          linearPaths() and our markers' show function). If WebGL is to be used, then we draw our traces ourselves,
+//          once uPlot has drawn everything else (see drawGpuTraces()), which is when uPlot would have drawn them.
+// Note #2: uPlot caches the paths of our traces, so we invalidate them whenever we switch between drawing our traces
+//          using Canvas 2D and not.
+// Note #3: our exports don't rely on what gets drawn (see svgDocument()), so they are not affected.
+
+let frameRenderer: GraphPanelActiveRenderer = 'canvas';
+let gpuFrameItems: IGpuPlotItem[] = [];
+let gpuTraces: IGpuPlotTrace[] = [];
+let warnedAboutWebGlNotBeingAvailable = false;
+
+const disposeGpuTraces = (fromIndex: number = 0): void => {
+  for (const gpuTrace of gpuTraces.slice(fromIndex)) {
+    gpuTrace.dispose();
+  }
+
+  gpuTraces = gpuTraces.slice(0, fromIndex);
+};
+
+const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
+  // Make sure that the data of our visible traces is on the GPU and return what we need to draw for them.
+
+  const res: IGpuPlotItem[] = [];
+  const pxRatio = uPlot.pxRatio;
+
+  for (let seriesIndex = 1; seriesIndex < u.series.length; ++seriesIndex) {
+    const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
+    const color = props.data.traces[seriesIndex - 1]?.color;
+
+    if (!u.series[seriesIndex]?.show || !xValues || !yValues || !color) {
+      continue;
+    }
+
+    gpuTraces[seriesIndex - 1] ??= gpuPlotRenderer.createTrace();
+
+    const gpuTrace = gpuTraces[seriesIndex - 1] as IGpuPlotTrace;
+
+    gpuTrace.update(xValues, yValues);
+
+    res.push({
+      trace: gpuTrace,
+      color,
+      alpha: seriesAlpha(seriesIndex - 1),
+      lineWidth: LINE_WIDTH * pxRatio,
+      markerSize: hasMarkers(xValues, yValues) ? MARKER_SIZE * pxRatio : 0
+    });
+  }
+
+  return res;
+};
+
+const prepareFrame = (u: uPlot): void => {
+  // Determine how our traces are to be drawn (see Note #1 above) and, if they are to be drawn using WebGL, keep track
+  // of what we need to draw.
+
+  const previousFrameRenderer = frameRenderer;
+  const area = pathArea(u);
+
+  frameRenderer = 'canvas';
+  gpuFrameItems = [];
+
+  disposeGpuTraces(u.series.length - 1);
+
+  if (props.renderer !== 'canvas') {
+    if (gpuPlotRenderer.isAvailable()) {
+      warnedAboutWebGlNotBeingAvailable = false;
+
+      if (area) {
+        const items = gpuFrameItemsOf(u);
+
+        if (isGpuPlotPrecise(area, items)) {
+          frameRenderer = 'webgl';
+          gpuFrameItems = items;
+        }
+      }
+    } else if (props.renderer === 'webgl') {
+      frameRenderer = 'none';
+
+      if (!warnedAboutWebGlNotBeingAvailable) {
+        warnedAboutWebGlNotBeingAvailable = true;
+
+        console.warn("@opencor/plot: WebGL is not available, so our traces cannot be drawn (our renderer is 'webgl').");
+      }
+    }
+  }
+
+  activeRenderer.value = frameRenderer;
+
+  // Invalidate the paths of our traces if we have switched between drawing them using Canvas 2D and not.
+
+  if ((frameRenderer === 'canvas') !== (previousFrameRenderer === 'canvas')) {
+    for (const series of u.series as unknown as { _paths: unknown }[]) {
+      series._paths = null;
+    }
+  }
+};
+
+const drawGpuTraces = (u: uPlot): void => {
+  // Draw our traces using WebGL, if needed.
+
+  if (frameRenderer !== 'webgl') {
+    return;
+  }
+
+  const area = pathArea(u);
+
+  if (area && gpuPlotRenderer.render(u.ctx, area, gpuFrameItems)) {
+    return;
+  }
+
+  // We couldn't draw our traces using WebGL (e.g., our WebGL context got lost in the meantime), so redraw our plot,
+  // which will draw them using Canvas 2D or not at all (see prepareFrame()).
+
+  queueMicrotask(() => {
+    if (plot === u) {
+      u.redraw(true);
+    }
+  });
 };
 
 const setPlotSize = (u: uPlot, width: number, height: number): void => {
@@ -4686,7 +4837,7 @@ const createPlot = (width: number, height: number): void => {
       width: LINE_WIDTH,
       paths: linearPaths,
       points: {
-        show: (u: uPlot, seriesIndex: number) => seriesHasMarkers(u, seriesIndex),
+        show: (u: uPlot, seriesIndex: number) => frameRenderer === 'canvas' && seriesHasMarkers(u, seriesIndex),
         paths: markerPaths,
         size: MARKER_SIZE,
         width: 0 // Note: this means that our markers are filled using the trace's colour.
@@ -4787,8 +4938,10 @@ const createPlot = (width: number, height: number): void => {
       ],
       series,
       hooks: {
+        drawClear: [prepareFrame],
         draw: [
           (u: uPlot) => {
+            drawGpuTraces(u);
             updatePlotRect(u);
             updateMarginsAsync();
 
@@ -4982,6 +5135,13 @@ vue.onMounted(() => {
     syncLegendWidth();
   });
 
+  // Redraw our plot when our GPU plot renderer gets restored (e.g., after a GPU reset), so that our traces get drawn
+  // using WebGL again, if needed.
+
+  stopListeningToGpuRestorations = gpuPlotRenderer.onRestored(() => {
+    plot?.redraw(true);
+  });
+
   // Start tracking whether the system uses light mode.
 
   if (prefersColorScheme) {
@@ -5025,6 +5185,11 @@ vue.onBeforeUnmount(() => {
   plot?.destroy();
 
   plot = undefined;
+
+  // Release our data from the GPU.
+
+  stopListeningToGpuRestorations?.();
+  disposeGpuTraces();
 });
 
 vue.onUnmounted(() => {
@@ -5065,6 +5230,15 @@ vue.watch(
         resetMargins();
       }
     });
+  }
+);
+
+// Redraw our plot when our renderer changes, so that our traces get drawn using it (see prepareFrame()).
+
+vue.watch(
+  () => props.renderer,
+  () => {
+    plot?.redraw(true);
   }
 );
 
