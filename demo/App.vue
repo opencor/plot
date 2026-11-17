@@ -39,6 +39,23 @@
         </select>
       </label>
       <label>
+        <input v-model="live" type="checkbox" />
+        Live
+      </label>
+      <label>
+        Points per second:
+        <select v-model.number="nbOfPointsPerSecond" :disabled="!live">
+          <option v-for="value in NBS_OF_POINTS_PER_SECOND" :key="value" :value="value">{{ formatNumber(value) }}</option>
+        </select>
+      </label>
+      <label>
+        X range:
+        <select v-model="xRange" :disabled="!live">
+          <option value="fixed">Fixed</option>
+          <option value="growing">Growing</option>
+        </select>
+      </label>
+      <label>
         Theme:
         <select v-model="theme">
           <option value="system">System</option>
@@ -65,6 +82,7 @@
       </label>
       <span class="demo-status">
         <span v-if="dataStatus">{{ dataStatus }}</span>
+        <span v-if="liveStatus">{{ liveStatus }}</span>
         <span v-if="csvExportStatus">{{ csvExportStatus }}</span>
         <span>{{ fps }} FPS</span>
         <span>Drawn using: {{ activeRenderers }}</span>
@@ -120,6 +138,7 @@ type PlotInstance = InstanceType<typeof OpenCORPlot>;
 const NBS_OF_TRACES = [1, 3, 10, 30, 100];
 const NBS_OF_POINTS = [10, 100, 1000, 10000, 100000, 1000000, 10000000];
 const NBS_OF_INSTANCES = [1, 2, 4, 9, 16, 25, 36, 49];
+const NBS_OF_POINTS_PER_SECOND = [10, 100, 1000, 10000, 100000, 1000000];
 
 const kind = vue.ref<DataKind>('smooth');
 const nbOfTraces = vue.ref<number>(3);
@@ -129,6 +148,9 @@ const theme = vue.ref<PlotTheme | 'mixed'>('system');
 const renderer = vue.ref<PlotRenderer>('auto');
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
+const live = vue.ref<boolean>(false);
+const nbOfPointsPerSecond = vue.ref<number>(1000);
+const xRange = vue.ref<'fixed' | 'growing'>('fixed');
 
 const formatNumber = (value: number): string => {
   return value.toLocaleString('en');
@@ -162,6 +184,7 @@ const tooManyPoints = (instances: number, traces: number, points: number): boole
 
 const datasets = vue.shallowRef<IPlotData[]>([]);
 const dataStatus = vue.ref<string>('');
+let generatedDatasets: IPlotData[] = [];
 let dataGeneration = 0;
 
 const nextPaint = (): Promise<void> => {
@@ -180,7 +203,10 @@ const generateData = async (): Promise<void> => {
 
   // Release our current data before generating our new data, so that we don't need memory for both.
 
+  stopLive();
+
   datasets.value = [];
+  generatedDatasets = [];
   dataStatus.value = `Generating ${formatNumber(totalNbOfPoints)} points...`;
 
   await nextPaint();
@@ -191,13 +217,138 @@ const generateData = async (): Promise<void> => {
 
   const startTime = performance.now();
 
-  datasets.value = Array.from({ length: nbOfInstances.value }, (_value, instance) =>
+  generatedDatasets = Array.from({ length: nbOfInstances.value }, (_value, instance) =>
     plotData(kind.value, nbOfTraces.value, nbOfPoints.value, instance)
   );
   dataStatus.value = `${formatNumber(totalNbOfPoints)} points (generated in ${Math.round(performance.now() - startTime)} ms)`;
+
+  showData();
+};
+
+// Live updating, i.e. our data gets plotted as if it was being generated (e.g., by a simulation), at the given number
+// of points per second (per trace), starting again after a short pause once all of it has been plotted.
+// Note #1: the X and Y values of a trace are views of the same buffers as before (i.e. those of our generated data),
+//          only longer, i.e. they are a continuation of their previous values (see traceValues.ts).
+// Note #2: our X range is either the range of our data so far (i.e. it grows) or the range of all of our data (i.e. it
+//          is fixed), like a simulation that is plotted for its whole duration.
+
+const LIVE_PAUSE = 1000; // Pause (in milliseconds) before starting again, once all of our data has been plotted.
+
+let liveFrameId = 0;
+let liveNbOfPoints = 0; // Number of points per trace that we have plotted so far.
+let liveTotalNbOfPoints = 0; // Number of points per trace that we will have plotted in the end.
+const liveStatus = vue.ref<string>('');
+
+const xAxisRange = (data: IPlotData): [number, number] => {
+  // Return the range of the X values of all the traces of the given data.
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  for (const xValues of new Set(data.traces.map((trace) => trace.x))) {
+    for (const x of xValues) {
+      if (x < min) {
+        min = x;
+      }
+
+      if (x > max) {
+        max = x;
+      }
+    }
+  }
+
+  return min <= max ? [min, max] : [0, 1];
+};
+
+const liveDatasets = (nbOfPoints: number, xAxisRanges: ([number, number] | undefined)[]): IPlotData[] => {
+  // Return our generated data, but with only the given number of points per trace, making sure that our traces still
+  // share their X values (since our GPU plot renderer handles each trace separately anyway, but it's what a consumer
+  // would do).
+
+  return generatedDatasets.map((data, instance) => {
+    const xViews = new Map<Float64Array, Float64Array>();
+
+    return {
+      ...data,
+      xAxisRange: xAxisRanges[instance],
+      traces: data.traces.map((trace) => {
+        let x = xViews.get(trace.x);
+
+        if (!x) {
+          x = trace.x.subarray(0, nbOfPoints);
+
+          xViews.set(trace.x, x);
+        }
+
+        return { ...trace, x, y: trace.y.subarray(0, nbOfPoints) };
+      })
+    };
+  });
+};
+
+const stopLive = (): void => {
+  cancelAnimationFrame(liveFrameId);
+
+  liveFrameId = 0;
+  liveStatus.value = '';
+};
+
+const startLive = (): void => {
+  stopLive();
+
+  const totalNbOfPoints = nbOfPoints.value;
+  const pointsPerMillisecond = nbOfPointsPerSecond.value / 1000;
+  const xAxisRanges = generatedDatasets.map((data) => (xRange.value === 'fixed' ? xAxisRange(data) : undefined));
+  let startTime = performance.now();
+
+  liveNbOfPoints = -1;
+  liveTotalNbOfPoints = totalNbOfPoints;
+
+  const onFrame = (time: number): void => {
+    // Start again, if all of our data has been plotted and we have paused long enough.
+
+    let elapsedTime = time - startTime;
+
+    if (elapsedTime > totalNbOfPoints / pointsPerMillisecond + LIVE_PAUSE) {
+      startTime = time;
+      elapsedTime = 0;
+    }
+
+    // Plot our data so far, if we have new points.
+
+    const newNbOfPoints = Math.min(totalNbOfPoints, Math.floor(elapsedTime * pointsPerMillisecond));
+
+    if (newNbOfPoints !== liveNbOfPoints) {
+      liveNbOfPoints = newNbOfPoints;
+
+      datasets.value = liveDatasets(newNbOfPoints, xAxisRanges);
+    }
+
+    liveFrameId = requestAnimationFrame(onFrame);
+  };
+
+  liveFrameId = requestAnimationFrame(onFrame);
+};
+
+const showData = (): void => {
+  // Show our generated data, either all at once or live.
+
+  if (live.value) {
+    startLive();
+  } else {
+    stopLive();
+
+    datasets.value = generatedDatasets;
+  }
 };
 
 vue.watch([kind, nbOfTraces, nbOfPoints, nbOfInstances], generateData, { immediate: true });
+
+vue.watch([live, nbOfPointsPerSecond, xRange], () => {
+  if (generatedDatasets.length) {
+    showData();
+  }
+});
 
 // Our instances, laid out in a grid that is as square as possible.
 
@@ -249,6 +400,10 @@ const updateDrawingStatus = (): void => {
     }
   }
 
+  if (liveFrameId) {
+    liveStatus.value = `Live: ${formatNumber(liveNbOfPoints)} of ${formatNumber(liveTotalNbOfPoints)} points per trace`;
+  }
+
   drawnPoints.value = `${formatNumber(nbOfDrawnPoints)} of ${formatNumber(nbOfPoints)}${nbOfPoints ? ` (${percentage(nbOfDrawnPoints / nbOfPoints)})` : ''}`;
 
   activeRenderers.value =
@@ -280,6 +435,8 @@ vue.onMounted(() => {
 
 vue.onBeforeUnmount(() => {
   cancelAnimationFrame(fpsFrameId);
+
+  stopLive();
 });
 
 // CSV export progress.

@@ -231,7 +231,7 @@ export type PlotActiveRenderer = 'canvas' | 'webgl' | 'none';
 
 export interface IPlotPointCounts {
   nbOfPoints: number; // Number of points of our visible traces.
-  nbOfDrawnPoints: number; // Number of those points that actually got drawn.
+  nbOfDrawnPoints: number; // Number of those points that actually got drawn (see pointCounts()).
 }
 
 // Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
@@ -378,7 +378,9 @@ const pointCounts = (): IPlotPointCounts => {
   // plot got drawn (see IPlotPointCounts).
   // Note #1: this is not reactive since it would otherwise trigger a Vue update every time our plot gets drawn (e.g.,
   //          while zooming or panning), i.e. it is meant to be polled.
-  // Note #2: with Canvas 2D, all the markers of a trace get drawn, if it has some (see markerPath()).
+  // Note #2: with Canvas 2D, the points of a trace that got drawn are those that we went through to build its path,
+  //          even though only some of them may end up in it (see linearPath()), since that is what drawing it costs.
+  //          Also, all the markers of a trace get drawn, if it has some (see markerPath()).
 
   if (frameRenderer === 'webgl') {
     return { ...gpuPointCounts };
@@ -4408,15 +4410,15 @@ const linearPathPoints = (
   };
 };
 
-// The number of points that we drew for each of our traces the last time that we built its path using Canvas 2D (see
-// linearPaths() and pointCounts()).
+// The number of points that we went through for each of our traces the last time that we built its path using Canvas
+// 2D (see linearPaths() and pointCounts()).
 
 let canvasDrawnPoints: number[] = [];
 
 const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, index0: number, index1: number) => {
   // Use our linear path builder for our trace (see linearPath()), and our level of detail (see linearPathPoints()),
   // unless our traces are not drawn using Canvas 2D (see prepareFrame()), keeping track of the number of points that we
-  // draw.
+  // go through.
 
   const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
   const area = pathArea(u);
@@ -4425,27 +4427,11 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
 
   if (xValues && yValues && area && frameRenderer === 'canvas') {
     const points = linearPathPoints(seriesIndex, xValues, yValues, index0, index1, area);
+    const lastIndex = Math.min(points.index1, points.xValues.length - 1, points.yValues.length - 1);
 
-    linearPath(
-      {
-        moveTo: (x: number, y: number): void => {
-          ++nbOfDrawnPoints;
+    linearPath(stroke, points.xValues, points.yValues, points.index0, points.index1, area);
 
-          stroke.moveTo(x, y);
-        },
-        lineTo: (x: number, y: number): void => {
-          ++nbOfDrawnPoints;
-
-          stroke.lineTo(x, y);
-        },
-        arc: stroke.arc.bind(stroke)
-      },
-      points.xValues,
-      points.yValues,
-      points.index0,
-      points.index1,
-      area
-    );
+    nbOfDrawnPoints = Math.max(0, lastIndex - points.index0 + 1);
   }
 
   canvasDrawnPoints[seriesIndex - 1] = nbOfDrawnPoints;
