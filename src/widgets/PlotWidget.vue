@@ -81,6 +81,7 @@
           v-html="common.sanitiseHtml(data.yAxisTitle)"
         />
       </template>
+      <PlotLivePointsWidget ref="livePointsRef" :backgroundColor="themeColors.background" :textColor="themeColors.text" />
       <svg v-if="hover && plotRect" class="hover-overlay"
         :style="{ left: `${plotRect.left}px`, top: `${plotRect.top}px` }"
         :width="plotRect.width"
@@ -173,6 +174,7 @@ import {
 import '../assets/theme.css';
 
 import ContextMenuWidget, { type IContextMenuItem } from './ContextMenuWidget.vue';
+import PlotLivePointsWidget, { type IPlotLivePoint } from './PlotLivePointsWidget.vue';
 
 export interface IPlotTrace {
   name: string;
@@ -286,13 +288,15 @@ const props = withDefaults(
     customContextMenu?: boolean;
     renderer?: PlotRenderer;
     levelOfDetail?: boolean;
+    live?: boolean;
   }>(),
   {
     showLegend: true,
     theme: 'system',
     customContextMenu: false,
     renderer: 'auto',
-    levelOfDetail: true
+    levelOfDetail: true,
+    live: false
   }
 );
 
@@ -4797,6 +4801,61 @@ const drawGpuTraces = (u: uPlot): void => {
   });
 };
 
+// The last point of our visible traces when our data is live (e.g., while a simulation is running), which is shown
+// using an overlay (see PlotLivePointsWidget.vue).
+// Note: our live points are updated whenever our plot gets drawn (e.g., when our data gets updated, when we zoom
+//       in/out, or when a trace gets highlighted), and our exports are not affected (which is what we want since they
+//       are only a visual aid). The last point of a trace is its last point with finite X and Y values, if any.
+
+const livePointsRef = vue.useTemplateRef<InstanceType<typeof PlotLivePointsWidget>>('livePointsRef');
+
+const updateLivePoints = (u: uPlot | undefined): void => {
+  // Determine the position (in CSS pixels, relative to our plotting area) of the last point of our visible traces, if
+  // our data is live.
+
+  if (!props.live || !u) {
+    livePointsRef.value?.setPoints(plotRect.value, []);
+
+    return;
+  }
+
+  const newLivePoints: IPlotLivePoint[] = [];
+
+  for (let seriesIndex = 1; seriesIndex < u.series.length; ++seriesIndex) {
+    // Make sure that our trace is visible and that it has some data.
+
+    const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
+    const color = props.data.traces[seriesIndex - 1]?.color;
+
+    if (!u.series[seriesIndex]?.show || !xValues || !yValues || !color) {
+      continue;
+    }
+
+    // Find the last point of our trace that has finite X and Y values, if any.
+
+    let i = Math.min(xValues.length, yValues.length) - 1;
+
+    while (i >= 0 && !(Number.isFinite(xValues[i]) && Number.isFinite(yValues[i]))) {
+      --i;
+    }
+
+    if (i < 0) {
+      continue;
+    }
+
+    // Convert the last point of our trace to the coordinates of our plotting area (in CSS pixels).
+
+    const x = u.valToPos(xValues[i] as number, 'x');
+    const y = u.valToPos(yValues[i] as number, 'y');
+
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      newLivePoints.push({ x, y, color, alpha: seriesAlpha(seriesIndex - 1) });
+    }
+  }
+
+  livePointsRef.value?.setPoints(plotRect.value, newLivePoints);
+};
+
 const setPlotSize = (u: uPlot, width: number, height: number): void => {
   // Set the size of our plot.
   // Note: if some of our visible traces have markers, then our autorange depends on the length of our axes (since the
@@ -5347,6 +5406,7 @@ const createPlot = (width: number, height: number): void => {
           (u: uPlot) => {
             drawGpuTraces(u);
             updatePlotRect(u);
+            updateLivePoints(u);
             updateMarginsAsync();
 
             // Update our hover tooltip, if any, since our plot may have changed (e.g., our data got updated or we
@@ -5646,6 +5706,15 @@ vue.watch(
   () => [props.renderer, props.levelOfDetail],
   () => {
     plot?.redraw(true);
+  }
+);
+
+// Show (or hide) the last point of our traces when our data becomes (or stops being) live (see updateLivePoints()).
+
+vue.watch(
+  () => props.live,
+  () => {
+    updateLivePoints(plot);
   }
 );
 

@@ -90,6 +90,8 @@ const buffer = new Float64Array(nbOfPoints);
 trace.y = buffer.subarray(0, nbOfValues);
 ```
 
+Also set the `live` prop while the data is live, so that the last point of each visible trace gets marked, making its latest value easy to spot (even where a trace overlaps itself, e.g. in a phase plot).
+
 ### Props
 
 | Prop | Type | Default | Description |
@@ -102,6 +104,7 @@ trace.y = buffer.subarray(0, nbOfValues);
 | `customContextMenu` | `boolean` | `false` | Whether to emit a `contextMenu` event rather than show our own context menu. |
 | `renderer` | `'auto' \| 'canvas' \| 'webgl'` | `'auto'` | What to draw traces with. `'auto'` uses whichever is faster for the browser and the data: WebGL in Firefox, and in other browsers only when Canvas 2D would need to stroke at least 300,000 points for the visible traces (i.e. all the points of traces whose X values are not sorted, e.g. phase plots, or that are too short for our level of detail to be used, e.g. 100 traces of 10,000 points); Canvas 2D otherwise. With `'webgl'`, traces are not drawn if WebGL is not available. Whenever WebGL is used, Canvas 2D takes over if WebGL is not available (with `'auto'`) or not precise enough for the current ranges (e.g., when zoomed in a lot). |
 | `levelOfDetail` | `boolean` | `true` | Whether to only go through the points that are needed for a trace to look the same. Only meant to be disabled to see how much it helps. |
+| `live` | `boolean` | `false` | Whether the data is live (e.g., while a simulation is running), in which case the last point of each visible trace is marked. |
 
 To draw traces like a plain uPlot plot would, i.e. without any of our optimisations, use `renderer="canvas"` and `:levelOfDetail="false"`. uPlot then draws every point of every trace on its canvas, using our path builder. Unlike uPlot's own, our path builder handles gaps (`NaN` values) and traces whose X values are not sorted (e.g., phase plots) at any number of points. This is also the reference that our optimisations can be benchmarked against.
 

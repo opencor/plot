@@ -7,6 +7,7 @@
           :theme="instanceTheme(index)"
           :renderer="renderer"
           :levelOfDetail="levelOfDetail"
+          :live="liveRunning"
           :showLegend="showLegend"
           :customContextMenu="customContextMenu"
           :margins="sharedMargins ? margins : undefined"
@@ -318,6 +319,9 @@ const generateData = async (): Promise<void> => {
 //          only longer, i.e. they are a continuation of their previous values (see traceValues.ts).
 // Note #2: our X range is either the range of our data so far (i.e. it grows) or the range of all of our data (i.e. it
 //          is fixed), like a simulation that is plotted for its whole duration.
+// Note #3: our instances are only told that our data is live while a run is going (i.e. while some of our data has yet
+//          to be plotted), so that the last point of their traces only gets marked during a run, like a consumer would
+//          do while a simulation is running.
 
 const LIVE_PAUSE = 1000; // Pause (in milliseconds) before starting again, once all of our data has been plotted.
 
@@ -325,6 +329,7 @@ let liveFrameId = 0;
 let liveNbOfPoints = 0; // Number of points per trace that we have plotted so far.
 let liveTotalNbOfPoints = 0; // Number of points per trace that we will have plotted in the end.
 const liveStatus = vue.ref<string>('');
+const liveRunning = vue.ref<boolean>(false); // Whether a run is going, i.e. whether some of our data is yet to be plotted.
 
 const xAxisRange = (data: IPlotData): [number, number] => {
   // Return the range of the X values of all the traces of the given data.
@@ -378,6 +383,7 @@ const stopLive = (): void => {
 
   liveFrameId = 0;
   liveStatus.value = '';
+  liveRunning.value = false;
 };
 
 const startLive = (): void => {
@@ -410,6 +416,8 @@ const startLive = (): void => {
 
       datasets.value = liveDatasets(newNbOfPoints, xAxisRanges);
     }
+
+    liveRunning.value = newNbOfPoints < totalNbOfPoints;
 
     liveFrameId = requestAnimationFrame(onFrame);
   };
@@ -891,10 +899,10 @@ const runBenchmark = async (): Promise<void> => {
   const nbOfPointsPerFrame = Math.max(1, Math.ceil(totalNbOfPoints / BENCHMARK_LIVE_FRAMES));
   const xAxisRanges = generatedDatasets.map((data) => xAxisRange(data));
   const liveResult = await runInteraction((frame) => {
-    datasets.value = liveDatasets(
-      Math.min(totalNbOfPoints, (frame % (BENCHMARK_LIVE_FRAMES + 1)) * nbOfPointsPerFrame),
-      xAxisRanges
-    );
+    const newNbOfPoints = Math.min(totalNbOfPoints, (frame % (BENCHMARK_LIVE_FRAMES + 1)) * nbOfPointsPerFrame);
+
+    datasets.value = liveDatasets(newNbOfPoints, xAxisRanges);
+    liveRunning.value = newNbOfPoints < totalNbOfPoints;
   });
 
   if (!isStopped()) {
