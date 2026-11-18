@@ -592,30 +592,54 @@ vue.onBeforeUnmount(() => {
   stopBenchmark();
 });
 
-// Benchmark, i.e. we zoom all of our instances in (up to BENCHMARK_MAX_ZOOM times) and then out again, over and over,
-// for a few seconds, so that they get redrawn every frame (both when most and when few of their points are visible),
-// and we then report our frame rate and how long it takes our instances to redraw themselves.
+// Benchmark, i.e. we redraw all of our instances every frame for a few seconds, and then report our frame rate and how
+// long it takes our instances to redraw themselves. We do this for different interactions, one after the other:
+//  - zoom: we zoom our instances in (up to BENCHMARK_MAX_ZOOM times, along both axes) and then out again, over and
+//    over, so that they get redrawn both when most and when few of their points are visible; and
+//  - pan: we zoom our instances in along their X axis only (BENCHMARK_PAN_ZOOMS times, so that their Y axis keeps its
+//    full range and they don't end up showing an empty area), and we then pan them along their X axis, towards one end
+//    of their data and then towards the other, over and over. Without any zoom, all of our points are visible, so we
+//    pan our instances by up to half of their X range either way (i.e. so that up to half of their plotting area ends
+//    up being empty).
 // Note #1: our frame rate is capped by the refresh rate of the display (e.g., 60 FPS), so the time it takes our
 //          instances to redraw themselves is what tells us how much headroom we have.
 // Note #2: our instances redraw themselves in their requestAnimationFrame() callbacks, which they request when they
-//          get zoomed. So, every frame, we zoom them from a requestAnimationFrame() callback (onFrameEnd()) that we
-//          request after that (so that it gets called after theirs in the next frame) and that is preceded by another
-//          one (onFrameStart()) that we request before that (so that it gets called before theirs in the next frame).
-//          Their redraw time is then the time between the start of onFrameStart() and the start of onFrameEnd(), plus
-//          the time it took to zoom them (in case they also do some work then).
+//          get zoomed or panned. So, every frame, we zoom or pan them from a requestAnimationFrame() callback
+//          (onFrameEnd()) that we request after that (so that it gets called after theirs in the next frame) and that
+//          is preceded by another one (onFrameStart()) that we request before that (so that it gets called before
+//          theirs in the next frame). Their redraw time is then the time between the start of onFrameStart() and the
+//          start of onFrameEnd(), plus the time it took to zoom or pan them (in case they also do some work then).
 // Note #3: WebGL draws asynchronously, so the GPU time of a frame is not (fully) included in the redraw time of our
 //          instances (but it limits our frame rate if our frame rate is not capped).
-// Note #4: we zoom our instances by sending wheel events to them (i.e. to the element of uPlot that handles them), and
-//          we reset their zoom once we are done by sending them a "0" key press (i.e. to their plotting area).
+// Note #4: we zoom our instances by sending wheel events to them (i.e. to the element of uPlot that handles them, or to
+//          their X axis dragger to only zoom along their X axis), we pan them by sending them arrow key presses (i.e.
+//          to their plotting area), and we reset their zoom between interactions by sending them a "0" key press.
+// Note #5: an arrow key press pans an axis by KEYBOARD_PAN_FRACTION of its length (see PlotWidget.vue), so with a zoom
+//          of Z, our instances get from the middle of their data to one of its ends in 5 * (Z - 1) frames, and from
+//          one end to the other in 10 * (Z - 1) frames. Without any zoom, they get panned by half of their X range in
+//          5 frames.
 
-const BENCHMARK_DURATION = 5000; // Duration (in milliseconds) of our benchmark.
-const BENCHMARK_MAX_ZOOM = 100; // Maximum zoom of our benchmark.
+const BENCHMARK_DURATION = 5000; // Duration (in milliseconds) of each of our interactions.
+const BENCHMARK_MAX_ZOOM = 100; // Maximum zoom of our zoom interaction.
+const BENCHMARK_PAN_ZOOMS = [1, 10, 100]; // Zooms at which we pan our instances.
 const BENCHMARK_WHEEL_DELTA = 20; // Biggest wheel delta that our plot accounts for, i.e. a zoom factor of e^0.1.
-const BENCHMARK_ZOOM_STEPS = Math.round(10 * Math.log(BENCHMARK_MAX_ZOOM)); // Number of wheel events to zoom in fully.
+const BENCHMARK_RESET_DELAY = 500; // Delay (in milliseconds) for our zoom to be reset (since it is animated).
+const KEYBOARD_PAN_FRACTION = 0.1; // See Note #5 above.
+
+const zoomSteps = (zoom: number): number => {
+  // Return the number of wheel events that are needed to zoom in by the given zoom.
+
+  return Math.round((200 / BENCHMARK_WHEEL_DELTA) * Math.log(zoom));
+};
+
+interface IBenchmarkResult {
+  fps: string;
+  redraw: string;
+}
 
 const benchmarking = vue.ref<boolean>(false); // Whether we are running our benchmark.
-const benchmarkStatus = vue.ref<string>(''); // Status of our benchmark, i.e. its progress or our frame rate.
-const benchmarkRedrawStatus = vue.ref<string>(''); // Redraw time of our instances during our benchmark.
+const benchmarkResults = vue.ref<Record<string, IBenchmarkResult>>({}); // Results of our interactions, by name.
+let benchmarkRun = 0; // Number of the current run of our benchmark, so that a stopped run can tell that it was stopped.
 let benchmarkFrameStartId = 0; // Id of our next onFrameStart() callback.
 let benchmarkFrameEndId = 0; // Id of our next onFrameEnd() callback.
 
@@ -624,6 +648,8 @@ const stopBenchmark = (): void => {
 
   cancelAnimationFrame(benchmarkFrameStartId);
   cancelAnimationFrame(benchmarkFrameEndId);
+
+  ++benchmarkRun;
 
   benchmarkFrameStartId = 0;
   benchmarkFrameEndId = 0;
@@ -638,96 +664,206 @@ const percentile = (values: number[], fraction: number): number => {
   return sortedValues[Math.min(sortedValues.length - 1, Math.floor(fraction * sortedValues.length))] ?? 0;
 };
 
-const runBenchmark = (): void => {
+const benchmarkPlotAreas = (): HTMLElement[] => {
+  return [...document.querySelectorAll<HTMLElement>('.demo-plot .plot-area')];
+};
+
+const sendWheelEvent = (element: HTMLElement, zoomIn: boolean): void => {
+  // Send a wheel event to the middle of the given element, to zoom in or out.
+
+  const rect = element.getBoundingClientRect();
+
+  element.dispatchEvent(
+    new WheelEvent('wheel', {
+      deltaY: zoomIn ? -BENCHMARK_WHEEL_DELTA : BENCHMARK_WHEEL_DELTA,
+      clientX: rect.x + 0.5 * rect.width,
+      clientY: rect.y + 0.5 * rect.height,
+      bubbles: true,
+      cancelable: true
+    })
+  );
+};
+
+const sendKeyPress = (key: string): void => {
+  // Send the given key press to all of our instances.
+
+  for (const plotArea of benchmarkPlotAreas()) {
+    plotArea.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  }
+};
+
+const runInteraction = (interact: (frame: number) => void): Promise<IBenchmarkResult | undefined> => {
+  // Run the given interaction every frame for BENCHMARK_DURATION, and return our frame rate and the redraw time of our
+  // instances, or nothing if our benchmark got stopped (see Note #2 above).
+
+  const run = benchmarkRun;
+
+  return new Promise((resolve) => {
+    const redrawDurations: number[] = [];
+    let startTime = -1;
+    let frameStartTime = 0;
+    let interactionDuration = 0;
+    let nbOfFrames = 0;
+    let frame = 0;
+
+    const onFrameStart = (time: number): void => {
+      // Start a new frame, unless we are done.
+
+      if (run !== benchmarkRun) {
+        resolve(undefined);
+
+        return;
+      }
+
+      if (startTime < 0) {
+        startTime = time;
+      } else if (time - startTime >= BENCHMARK_DURATION) {
+        cancelAnimationFrame(benchmarkFrameEndId);
+
+        const averageRedrawDuration =
+          redrawDurations.reduce((sum, value) => sum + value, 0) / Math.max(1, redrawDurations.length);
+
+        resolve({
+          fps: `${Math.round((1000 * nbOfFrames) / (time - startTime))} FPS`,
+          redraw: `${averageRedrawDuration.toFixed(1)} ms (95%: ${percentile(redrawDurations, 0.95).toFixed(1)} ms)`
+        });
+
+        return;
+      }
+
+      ++nbOfFrames;
+
+      frameStartTime = performance.now();
+      benchmarkFrameStartId = requestAnimationFrame(onFrameStart);
+    };
+
+    const onFrameEnd = (): void => {
+      // Keep track of how long it took our instances to redraw themselves (but not for our first frame, since we
+      // haven't interacted with them yet), and interact with them again.
+
+      if (nbOfFrames > 1) {
+        redrawDurations.push(performance.now() - frameStartTime + interactionDuration);
+      }
+
+      const interactionStartTime = performance.now();
+
+      interact(frame++);
+
+      interactionDuration = performance.now() - interactionStartTime;
+      benchmarkFrameEndId = requestAnimationFrame(onFrameEnd);
+    };
+
+    benchmarkFrameStartId = requestAnimationFrame(onFrameStart);
+    benchmarkFrameEndId = requestAnimationFrame(onFrameEnd);
+  });
+};
+
+const nextFrame = (): Promise<number> => {
+  return new Promise((resolve) => {
+    benchmarkFrameStartId = requestAnimationFrame(resolve);
+  });
+};
+
+const delay = (duration: number): Promise<void> => {
+  return new Promise((resolve) => {
+    setTimeout(resolve, duration);
+  });
+};
+
+const runBenchmark = async (): Promise<void> => {
   // Run our benchmark (see above).
 
   stopBenchmark();
 
-  const overs = [...document.querySelectorAll<HTMLElement>('.demo-plot .u-over')];
-  const redrawDurations: number[] = [];
-  let startTime = -1;
-  let frameStartTime = 0;
-  let zoomDuration = 0;
-  let nbOfFrames = 0;
-  let zoomStep = 0;
+  const run = benchmarkRun;
+  const isStopped = (): boolean => run !== benchmarkRun;
+  const record = (name: string, result: IBenchmarkResult | undefined): boolean => {
+    // Record the result of the given interaction, reset the zoom of our instances, and return whether we can carry on.
+
+    sendKeyPress('0');
+
+    if (!result) {
+      return false;
+    }
+
+    benchmarkResults.value = { ...benchmarkResults.value, [name]: result };
+
+    return true;
+  };
 
   benchmarking.value = true;
-  benchmarkStatus.value = 'Running...';
-  benchmarkRedrawStatus.value = '';
+  benchmarkResults.value = {};
 
-  const zoom = (): void => {
-    // Zoom our instances in or out, and keep track of how long it took.
+  // Zoom our instances in and out, along both axes.
 
-    const zoomStartTime = performance.now();
-    const zoomIn = Math.floor(zoomStep / BENCHMARK_ZOOM_STEPS) % 2 === 0;
+  const maxZoomSteps = zoomSteps(BENCHMARK_MAX_ZOOM);
+  const overs = [...document.querySelectorAll<HTMLElement>('.demo-plot .u-over')];
 
-    for (const over of overs) {
-      const rect = over.getBoundingClientRect();
+  if (
+    !record(
+      'zoom',
+      await runInteraction((frame) => {
+        const zoomIn = Math.floor(frame / maxZoomSteps) % 2 === 0;
 
-      over.dispatchEvent(
-        new WheelEvent('wheel', {
-          deltaY: zoomIn ? -BENCHMARK_WHEEL_DELTA : BENCHMARK_WHEEL_DELTA,
-          clientX: rect.x + 0.5 * rect.width,
-          clientY: rect.y + 0.5 * rect.height,
-          bubbles: true,
-          cancelable: true
-        })
-      );
+        for (const over of overs) {
+          sendWheelEvent(over, zoomIn);
+        }
+      })
+    )
+  ) {
+    return;
+  }
+
+  // Pan our instances, at different zooms.
+
+  for (const zoom of BENCHMARK_PAN_ZOOMS) {
+    await delay(BENCHMARK_RESET_DELAY);
+
+    // Zoom our instances in along their X axis only (i.e. using their X axis dragger), and wait for them to be done
+    // animating.
+
+    const xAxisDraggers = [...document.querySelectorAll<HTMLElement>('.demo-plot .dragger')].filter(
+      (dragger) => dragger.style.cursor === 'ew-resize'
+    );
+
+    for (let i = zoomSteps(zoom); i > 0; --i) {
+      for (const xAxisDragger of xAxisDraggers) {
+        sendWheelEvent(xAxisDragger, true);
+      }
+
+      await nextFrame();
+
+      if (isStopped()) {
+        return;
+      }
     }
 
-    ++zoomStep;
+    await delay(BENCHMARK_RESET_DELAY);
 
-    zoomDuration = performance.now() - zoomStartTime;
-  };
-
-  const finish = (time: number): void => {
-    // Stop our benchmark, reset the zoom of our instances, and report our results.
-
-    stopBenchmark();
-
-    for (const plotArea of document.querySelectorAll<HTMLElement>('.demo-plot .plot-area')) {
-      plotArea.dispatchEvent(new KeyboardEvent('keydown', { key: '0', bubbles: true, cancelable: true }));
-    }
-
-    const averageRedrawDuration =
-      redrawDurations.reduce((sum, value) => sum + value, 0) / Math.max(1, redrawDurations.length);
-
-    benchmarkStatus.value = `${Math.round((1000 * nbOfFrames) / (time - startTime))} FPS`;
-    benchmarkRedrawStatus.value = `${averageRedrawDuration.toFixed(1)} ms (95%: ${percentile(redrawDurations, 0.95).toFixed(1)} ms)`;
-  };
-
-  const onFrameStart = (time: number): void => {
-    // Start a new frame, unless we are done (see Note #2 above).
-
-    if (startTime < 0) {
-      startTime = time;
-    } else if (time - startTime >= BENCHMARK_DURATION) {
-      finish(time);
-
+    if (isStopped()) {
       return;
     }
 
-    ++nbOfFrames;
+    // Pan our instances from the middle of their data to one of its ends, then to the other, and so on (see Note #5
+    // above).
 
-    frameStartTime = performance.now();
-    benchmarkFrameStartId = requestAnimationFrame(onFrameStart);
-  };
+    const halfSweep = Math.max(5 * (zoom - 1), 5);
 
-  const onFrameEnd = (): void => {
-    // Keep track of how long it took our instances to redraw themselves (but not for our first frame, since we haven't
-    // zoomed them yet), and zoom them again (see Note #2 above).
+    if (
+      !record(
+        `pan${zoom}`,
+        await runInteraction((frame) => {
+          const sweep = Math.floor((frame + halfSweep) / (2 * halfSweep));
 
-    if (nbOfFrames > 1) {
-      redrawDurations.push(performance.now() - frameStartTime + zoomDuration);
+          sendKeyPress(sweep % 2 === 0 ? 'ArrowRight' : 'ArrowLeft');
+        })
+      )
+    ) {
+      return;
     }
+  }
 
-    zoom();
-
-    benchmarkFrameEndId = requestAnimationFrame(onFrameEnd);
-  };
-
-  benchmarkFrameStartId = requestAnimationFrame(onFrameStart);
-  benchmarkFrameEndId = requestAnimationFrame(onFrameEnd);
+  benchmarking.value = false;
 };
 
 // Loss of our WebGL context, which we restore after a while, so that we can see our instances fall back to drawing
@@ -789,6 +925,24 @@ const onCsvExport = (event: IPlotCsvExportEvent): void => {
 
 // Our status, i.e. what we show at the top of our sidebar.
 
+const benchmarkRows = vue.computed(() => {
+  // The results of our benchmark (see above), i.e. our frame rate and redraw time for each of our interactions.
+
+  const interactions: [name: string, label: string][] = [
+    ['zoom', 'Zoom'],
+    ...BENCHMARK_PAN_ZOOMS.map((zoom): [string, string] => [`pan${zoom}`, `Pan (${zoom}×)`])
+  ];
+
+  return interactions.flatMap(([name, label]) => {
+    const result = benchmarkResults.value[name];
+
+    return [
+      { term: `${label} benchmark`, value: result?.fps ?? (benchmarking.value ? 'Running...' : '') },
+      { term: `${label} redraw`, value: result?.redraw ?? '' }
+    ];
+  });
+});
+
 const statusRows = vue.computed(() => [
   { term: 'Frame rate', value: `${fps.value} FPS` },
   { term: 'Drawn using', value: activeRenderers.value },
@@ -801,8 +955,7 @@ const statusRows = vue.computed(() => [
   { term: 'Log memory', value: logMemoryStatus.value },
   { term: 'GPU memory', value: gpuMemoryStatus.value },
   { term: 'Live', value: liveStatus.value },
-  { term: 'Benchmark', value: benchmarkStatus.value },
-  { term: 'Redraw time', value: benchmarkRedrawStatus.value },
+  ...benchmarkRows.value,
   { term: 'WebGL context', value: webGlStatus.value },
   { term: 'CSV export', value: csvExportStatus.value }
 ]);
