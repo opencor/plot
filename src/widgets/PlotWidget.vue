@@ -4608,7 +4608,13 @@ const prepareFrame = (u: uPlot): void => {
   frameRenderer = 'canvas';
   gpuFrameItems = [];
 
-  disposeGpuTraces(u.series.length - 1);
+  // Dispose of the GPU traces that we don't need anymore, i.e. those of the traces that we don't have anymore or all of
+  // them if our traces are to be drawn using Canvas 2D (in which case they would only use memory, both on the GPU and
+  // for their level of detail).
+  // Note: we keep our GPU traces if WebGL is to be used, even if our traces get drawn using Canvas 2D (e.g., if WebGL
+  //       is not precise enough for our current ranges), since we will need them again (e.g., once we zoom out).
+
+  disposeGpuTraces(props.renderer === 'canvas' ? 0 : u.series.length - 1);
 
   canvasTraces = canvasTraces.slice(0, u.series.length - 1);
 
