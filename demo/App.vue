@@ -595,20 +595,27 @@ vue.onBeforeUnmount(() => {
 // Benchmark, i.e. we redraw all of our instances every frame for a few seconds, and then report our frame rate and how
 // long it takes our instances to redraw themselves. We do this for different interactions, one after the other:
 //  - zoom: we zoom our instances in (up to BENCHMARK_MAX_ZOOM times, along both axes) and then out again, over and
-//    over, so that they get redrawn both when most and when few of their points are visible; and
+//    over, so that they get redrawn both when most and when few of their points are visible;
 //  - pan: we zoom our instances in along their X axis only (BENCHMARK_PAN_ZOOMS times, so that their Y axis keeps its
 //    full range and they don't end up showing an empty area), and we then pan them along their X axis, towards one end
 //    of their data and then towards the other, over and over. Without any zoom, all of our points are visible, so we
 //    pan our instances by up to half of their X range either way (i.e. so that up to half of their plotting area ends
-//    up being empty).
+//    up being empty); and
+//  - live: we plot our data as if it was being generated (see Live updating above), from no points to all of them in
+//    BENCHMARK_LIVE_FRAMES frames, over and over, with a fixed X range (like a simulation that is plotted for its whole
+//    duration). This means that every frame, our instances get a few more points (i.e. a continuation of their
+//    previous ones, see traceValues.ts), which they need to process and draw.
 // Note #1: our frame rate is capped by the refresh rate of the display (e.g., 60 FPS), so the time it takes our
 //          instances to redraw themselves is what tells us how much headroom we have.
 // Note #2: our instances redraw themselves in their requestAnimationFrame() callbacks, which they request when they
-//          get zoomed or panned. So, every frame, we zoom or pan them from a requestAnimationFrame() callback
-//          (onFrameEnd()) that we request after that (so that it gets called after theirs in the next frame) and that
-//          is preceded by another one (onFrameStart()) that we request before that (so that it gets called before
-//          theirs in the next frame). Their redraw time is then the time between the start of onFrameStart() and the
-//          start of onFrameEnd(), plus the time it took to zoom or pan them (in case they also do some work then).
+//          get zoomed, panned, or updated. So, every frame, we zoom, pan, or update them from a requestAnimationFrame()
+//          callback (onFrameEnd()) that we request after that (so that it gets called after theirs in the next frame)
+//          and that is preceded by another one (onFrameStart()) that we request before that (so that it gets called
+//          before theirs in the next frame). The redraw time of our instances is then the time between the start of
+//          onFrameStart() and the end of the frame, i.e. once the browser has rendered it, which is when the message
+//          that onFrameEnd() posts gets handled. This includes everything that happens during the frame: our instances
+//          redrawing themselves, processing their new data (which they do once onFrameEnd() has returned), and the
+//          browser rendering the frame.
 // Note #3: WebGL draws asynchronously, so the GPU time of a frame is not (fully) included in the redraw time of our
 //          instances (but it limits our frame rate if our frame rate is not capped).
 // Note #4: we zoom our instances by sending wheel events to them (i.e. to the element of uPlot that handles them, or to
@@ -624,6 +631,7 @@ const BENCHMARK_MAX_ZOOM = 100; // Maximum zoom of our zoom interaction.
 const BENCHMARK_PAN_ZOOMS = [1, 10, 100]; // Zooms at which we pan our instances.
 const BENCHMARK_WHEEL_DELTA = 20; // Biggest wheel delta that our plot accounts for, i.e. a zoom factor of e^0.1.
 const BENCHMARK_RESET_DELAY = 500; // Delay (in milliseconds) for our zoom to be reset (since it is animated).
+const BENCHMARK_LIVE_FRAMES = 300; // Number of frames in which we plot all of our data live.
 const KEYBOARD_PAN_FRACTION = 0.1; // See Note #5 above.
 
 const zoomSteps = (zoom: number): number => {
@@ -700,16 +708,26 @@ const runInteraction = (interact: (frame: number) => void): Promise<IBenchmarkRe
 
   return new Promise((resolve) => {
     const redrawDurations: number[] = [];
+    const frameEndChannel = new MessageChannel();
     let startTime = -1;
     let frameStartTime = 0;
-    let interactionDuration = 0;
     let nbOfFrames = 0;
     let frame = 0;
+
+    frameEndChannel.port1.onmessage = (): void => {
+      // Keep track of how long our frame took (but not for our first frame, since our instances haven't had anything
+      // to redraw yet).
+
+      if (nbOfFrames > 1) {
+        redrawDurations.push(performance.now() - frameStartTime);
+      }
+    };
 
     const onFrameStart = (time: number): void => {
       // Start a new frame, unless we are done.
 
       if (run !== benchmarkRun) {
+        frameEndChannel.port1.close();
         resolve(undefined);
 
         return;
@@ -719,6 +737,7 @@ const runInteraction = (interact: (frame: number) => void): Promise<IBenchmarkRe
         startTime = time;
       } else if (time - startTime >= BENCHMARK_DURATION) {
         cancelAnimationFrame(benchmarkFrameEndId);
+        frameEndChannel.port1.close();
 
         const averageRedrawDuration =
           redrawDurations.reduce((sum, value) => sum + value, 0) / Math.max(1, redrawDurations.length);
@@ -738,18 +757,12 @@ const runInteraction = (interact: (frame: number) => void): Promise<IBenchmarkRe
     };
 
     const onFrameEnd = (): void => {
-      // Keep track of how long it took our instances to redraw themselves (but not for our first frame, since we
-      // haven't interacted with them yet), and interact with them again.
-
-      if (nbOfFrames > 1) {
-        redrawDurations.push(performance.now() - frameStartTime + interactionDuration);
-      }
-
-      const interactionStartTime = performance.now();
+      // Interact with our instances, and get to know when our frame has been rendered.
 
       interact(frame++);
 
-      interactionDuration = performance.now() - interactionStartTime;
+      frameEndChannel.port2.postMessage(null);
+
       benchmarkFrameEndId = requestAnimationFrame(onFrameEnd);
     };
 
@@ -863,6 +876,35 @@ const runBenchmark = async (): Promise<void> => {
     }
   }
 
+  // Plot our data live, with a fixed X range, stopping our own live updating, if any, while we do so, and then showing
+  // our data as it was before (i.e. all at once or live).
+
+  await delay(BENCHMARK_RESET_DELAY);
+
+  if (isStopped()) {
+    return;
+  }
+
+  stopLive();
+
+  const totalNbOfPoints = nbOfPoints.value;
+  const nbOfPointsPerFrame = Math.max(1, Math.ceil(totalNbOfPoints / BENCHMARK_LIVE_FRAMES));
+  const xAxisRanges = generatedDatasets.map((data) => xAxisRange(data));
+  const liveResult = await runInteraction((frame) => {
+    datasets.value = liveDatasets(
+      Math.min(totalNbOfPoints, (frame % (BENCHMARK_LIVE_FRAMES + 1)) * nbOfPointsPerFrame),
+      xAxisRanges
+    );
+  });
+
+  if (!isStopped()) {
+    showData();
+  }
+
+  if (!record('live', liveResult)) {
+    return;
+  }
+
   benchmarking.value = false;
 };
 
@@ -930,7 +972,8 @@ const benchmarkRows = vue.computed(() => {
 
   const interactions: [name: string, label: string][] = [
     ['zoom', 'Zoom'],
-    ...BENCHMARK_PAN_ZOOMS.map((zoom): [string, string] => [`pan${zoom}`, `Pan (${zoom}×)`])
+    ...BENCHMARK_PAN_ZOOMS.map((zoom): [string, string] => [`pan${zoom}`, `Pan (${zoom}×)`]),
+    ['live', 'Live']
   ];
 
   return interactions.flatMap(([name, label]) => {
