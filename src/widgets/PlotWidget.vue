@@ -1947,6 +1947,21 @@ const targetRange = (axisKey: AxisKey): Range | undefined => {
   return rangeAnimation?.to[axisKey] ?? currentRange(axisKey);
 };
 
+const frameTime = (): number => {
+  // Return the time of the current frame, i.e. the time that gets passed to the requestAnimationFrame() callbacks of
+  // the current frame (e.g., stepRangeAnimation()), or the current time if it is not available.
+  // Note: an animation must start at the time of the current frame rather than at the current time. Indeed, if a frame
+  //       takes long (e.g., because redrawing our plot is slow) and an animation gets (re)started late in it (e.g.,
+  //       when using the mouse wheel, see applyWheelZoom()), then the next frame may start at about the same time as
+  //       our animation, in which case its first step would not make any progress. So, if our animation was to keep
+  //       being restarted (e.g., when using a trackpad, which sends wheel events every frame), then it would never make
+  //       any progress.
+
+  const time = document.timeline?.currentTime;
+
+  return typeof time === 'number' ? time : performance.now();
+};
+
 const animateScales = (final: Partial<Record<AxisKey, Range | null>>, duration: number): void => {
   // Animate the scales of our plot from their current ranges to the given ones (with a null range meaning that the
   // corresponding axis gets autoranged, see setScales()) over the given duration, carrying on with the axes that we may
@@ -1996,7 +2011,7 @@ const animateScales = (final: Partial<Record<AxisKey, Range | null>>, duration: 
     to,
     final: mergedFinal,
     data: u.data,
-    start: performance.now(),
+    start: frameTime(),
     duration
   };
 
