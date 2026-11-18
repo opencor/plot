@@ -186,6 +186,10 @@ bun dependencies:update  # Check for and update outdated dependencies.
 bun version:new          # Bump the version number.
 ```
 
+### Releasing
+
+To publish a new version to [npm](https://www.npmjs.com/package/@opencor/plot), bump the version number (`bun version:new`), commit it, and push a tag named after it (i.e. `vX.YYYYMMDD.Z` for version `X.YYYYMMDD.Z`). Our [CD workflow](.github/workflows/cd.yml) then tests, builds and publishes it. It fails if the tag doesn't match the version in `package.json`.
+
 ## License
 
 [Apache License 2.0](LICENSE.txt).

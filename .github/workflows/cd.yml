@@ -1,0 +1,55 @@
+name: CD
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    if: ${{ github.repository == 'opencor/plot' }}
+    name: npm
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out OpenCOR Plot
+        uses: actions/checkout@v7
+      - name: Check the version
+        # Make sure that our tag is our version number (i.e. vX.YYYYMMDD.Z for version X.YYYYMMDD.Z), so that we never
+        # publish a version that is not the one we tagged.
+        run: |
+          VERSION=$(jq -r .version package.json)
+
+          if [ "${GITHUB_REF_NAME}" != "v${VERSION}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} doesn't match version ${VERSION} in package.json (expected v${VERSION})."
+
+            exit 1
+          fi
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 'lts/*'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Update npm
+        # Install the latest version of npm since we need npm 11.5.1 or later to publish to npm using OIDC (see
+        # https://docs.npmjs.com/trusted-publishers).
+        run: npm install -g npm@latest
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+      - name: OpenCOR Plot dependencies
+        run: bun install --frozen-lockfile
+      - name: Testing
+        # Note: our code coverage must be 100% (see bunfig.toml).
+        run: bun test --coverage
+      - name: Build OpenCOR Plot
+        # Note: we must use `bun run build` rather than `bun build`, since the latter would run bun's own build runner.
+        run: bun run build
+      - name: Publish OpenCOR Plot
+        # bun cannot currently be used to publish to npm using OIDC (see https://github.com/oven-sh/bun/issues/22423 and
+        # https://github.com/oven-sh/bun/issues/15601), so we use npm instead. To publish using OIDC implies automatic
+        # provenance generation, so no need to specify --provenance (see https://docs.npmjs.com/trusted-publishers).
+        # Provenance requires "repository.url" in package.json to match the repository from which we are publishing. In
+        # our case, it means that we can only publish to npm from the "opencor/plot" repository.
+        run: npm publish --access public
