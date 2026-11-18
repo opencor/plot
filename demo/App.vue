@@ -169,7 +169,7 @@ const kind = vue.ref<DataKind>('smooth');
 const nbOfTraces = vue.ref<number>(3);
 const nbOfPoints = vue.ref<number>(1000);
 const nbOfInstances = vue.ref<number>(1);
-const theme = vue.ref<PlotTheme | 'mixed'>('system');
+const theme = vue.ref<PlotTheme | 'mixed'>('mixed');
 const renderer = vue.ref<PlotRenderer>('auto');
 const levelOfDetail = vue.ref<boolean>(true);
 const showLegend = vue.ref<boolean>(true);
@@ -186,11 +186,24 @@ const percentage = (ratio: number): string => {
   return ratio.toLocaleString('en', { style: 'percent', maximumSignificantDigits: 2 });
 };
 
+// Whether the system uses dark mode, which we keep track of so that our mixed theme can alternate between the theme of
+// the system and the other one.
+
+const darkModeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const systemUsesDarkMode = vue.ref<boolean>(darkModeQuery.matches);
+
+const onDarkModeChange = (event: MediaQueryListEvent): void => {
+  systemUsesDarkMode.value = event.matches;
+};
+
+darkModeQuery.addEventListener('change', onDarkModeChange);
+
 const instanceTheme = (index: number): PlotTheme => {
-  // Return the theme of the given instance, alternating between light and dark if our theme is mixed.
+  // Return the theme of the given instance, alternating between the theme of the system (for our first instance) and
+  // the other one if our theme is mixed.
 
   if (theme.value === 'mixed') {
-    return index % 2 ? 'dark' : 'light';
+    return index % 2 ? (systemUsesDarkMode.value ? 'light' : 'dark') : 'system';
   }
 
   return theme.value;
@@ -462,6 +475,7 @@ vue.onMounted(() => {
 });
 
 vue.onBeforeUnmount(() => {
+  darkModeQuery.removeEventListener('change', onDarkModeChange);
   cancelAnimationFrame(fpsFrameId);
   clearTimeout(webGlTimeoutId);
 
