@@ -162,7 +162,13 @@ import {
   isPrecise as isGpuPlotPrecise
 } from '../common/gpuPlotRenderer';
 import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
-import { isContinuationOf } from '../common/traceValues';
+import {
+  type ILogValues,
+  type IValuesStatistics,
+  isContinuationOf,
+  logValues,
+  valuesStatistics
+} from '../common/traceValues';
 
 import '../assets/theme.css';
 
@@ -1685,34 +1691,23 @@ const anyMarkers = (u: uPlot): boolean => {
 };
 
 const finiteDataRange = (u: uPlot, axisKey: AxisKey, seriesIndex?: number): Range | undefined => {
-  // Determine the range of the (finite) values of our visible traces (or of the given trace) for the given axis.
+  // Determine the range of the (finite) values of our visible traces (or of the given trace) for the given axis, using
+  // the statistics of their values (see plotData()).
 
-  const facetIndex = axisKey === 'x' ? 0 : 1;
   const firstIndex = seriesIndex ?? 1;
   const lastIndex = seriesIndex ?? u.series.length - 1;
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
 
   for (let i = firstIndex; i <= lastIndex; ++i) {
-    const values = seriesData(u, i)?.[facetIndex];
+    const statistics = plottedValues[i - 1]?.[axisKey].statistics;
 
-    if (!values || !u.series[i]?.show) {
+    if (!statistics || !u.series[i]?.show) {
       continue;
     }
 
-    for (let j = 0; j < values.length; ++j) {
-      const value = values[j] as number;
-
-      if (Number.isFinite(value)) {
-        if (value < min) {
-          min = value;
-        }
-
-        if (value > max) {
-          max = value;
-        }
-      }
-    }
+    min = Math.min(min, statistics.min);
+    max = Math.max(max, statistics.max);
   }
 
   return min <= max ? [min, max] : undefined;
@@ -1790,9 +1785,9 @@ let zoomTitles: string | undefined;
 //       along that axis gets reset) or when our axis titles change (i.e. when we are plotting something else, see
 //       updatePlot()).
 
-const naturalRange = (u: uPlot, axisKey: AxisKey, dataMin: number | null, dataMax: number | null): Range => {
-  // Return the natural range of the given axis, i.e. the given range for the axis, if any, or the autorange of the
-  // given data range otherwise (or of our data if no data range is given).
+const naturalRange = (u: uPlot, axisKey: AxisKey): Range => {
+  // Return the natural range of the given axis, i.e. the given range for the axis, if any, or the autorange of our data
+  // otherwise.
 
   // If a range was given for the axis and it can be plotted (i.e. it is finite and, for a logarithmic axis, positive,
   // see plotValue()), then we use it.
@@ -1818,32 +1813,28 @@ const naturalRange = (u: uPlot, axisKey: AxisKey, dataMin: number | null, dataMa
   }
 
   // No range was given, so we use the range of our data.
-  // Note: uPlot's range of our data may not be finite, e.g., if a trace starts with a NaN value (uPlot then never
-  //       moves away from it) or has an infinite value. In that case, we determine the range of our data ourselves,
-  //       ignoring non-finite values.
+  // Note: we determine the range of our data ourselves, from the statistics of our values (see plotData()), rather than
+  //       let uPlot determine it (see the auto property of our series in createPlot()). Indeed, uPlot would go through
+  //       all of our values whenever our data gets updated, and its range may not be finite (e.g., if a trace starts
+  //       with a NaN value, uPlot never moves away from it, or if it has an infinite value).
 
-  let min = dataMin;
-  let max = dataMax;
+  const finiteRange = finiteDataRange(u, axisKey);
 
-  if (min === null || max === null || !Number.isFinite(min) || !Number.isFinite(max)) {
-    const finiteRange = finiteDataRange(u, axisKey);
+  if (!finiteRange) {
+    // No (finite) data, so if some of our traces are hidden (e.g., the user hid all of them using our legend), then we
+    // keep our last autorange (so that the user sees the same view when showing some traces again). Otherwise, we use
+    // Plotly's default range.
 
-    if (!finiteRange) {
-      // No (finite) data, so if some of our traces are hidden (e.g., the user hid all of them using our legend), then
-      // we keep our last autorange (so that the user sees the same view when showing some traces again). Otherwise,
-      // we use Plotly's default range.
+    const lastAutoRange = lastAutoRanges[axisKey];
 
-      const lastAutoRange = lastAutoRanges[axisKey];
-
-      if (lastAutoRange && u.series.some((series: uPlot.Series, index: number) => index > 0 && !series.show)) {
-        return [...lastAutoRange];
-      }
-
-      return axisKey === 'x' ? [...DEFAULT_X_RANGE] : [...DEFAULT_Y_RANGE];
+    if (lastAutoRange && u.series.some((series: uPlot.Series, index: number) => index > 0 && !series.show)) {
+      return [...lastAutoRange];
     }
 
-    [min, max] = finiteRange;
+    return axisKey === 'x' ? [...DEFAULT_X_RANGE] : [...DEFAULT_Y_RANGE];
   }
+
+  const [min, max] = finiteRange;
 
   // Autorange our axis and keep track of it.
   // Note: we keep track of it here rather than rely on uPlot's scales since our plot may get recreated (e.g., when the
@@ -1857,7 +1848,7 @@ const naturalRange = (u: uPlot, axisKey: AxisKey, dataMin: number | null, dataMa
 };
 
 const scaleRange = (axisKey: AxisKey): uPlot.Range.Function => {
-  return (u: uPlot, dataMin: number | null, dataMax: number | null): Range => {
+  return (u: uPlot): Range => {
     // If the axis is being animated, then we use its animated range (e.g., if our data gets updated while we are
     // animating a zoom, see animateScales()).
 
@@ -1877,7 +1868,7 @@ const scaleRange = (axisKey: AxisKey): uPlot.Range.Function => {
 
     // Use the natural range of the axis.
 
-    return naturalRange(u, axisKey, dataMin, dataMax);
+    return naturalRange(u, axisKey);
   };
 };
 
@@ -2000,7 +1991,7 @@ const animateScales = (final: Partial<Record<AxisKey, Range | null>>, duration: 
 
     if (range) {
       from[axisKey] = range;
-      to[axisKey] = mergedFinal[axisKey] ?? naturalRange(u, axisKey, null, null);
+      to[axisKey] = mergedFinal[axisKey] ?? naturalRange(u, axisKey);
     }
   }
 
@@ -2054,7 +2045,7 @@ const stepRangeAnimation = (now: number): void => {
 
     for (const axisKey of Object.keys(animation.to) as AxisKey[]) {
       if (animation.final[axisKey] === null) {
-        animation.to[axisKey] = naturalRange(u, axisKey, null, null);
+        animation.to[axisKey] = naturalRange(u, axisKey);
       }
     }
   }
@@ -4954,19 +4945,6 @@ const queueHoverUpdate = (): void => {
   });
 };
 
-const isSorted = (values: Float64Array): boolean => {
-  // Return whether the given values are sorted in increasing order.
-  // Note: we negate our comparison so that NaN values (for which all comparisons are false) mean unsorted values.
-
-  for (let i = 1; i < values.length; ++i) {
-    if (!((values[i] as number) >= (values[i - 1] as number))) {
-      return false;
-    }
-  }
-
-  return true;
-};
-
 // Logarithmic axes.
 // Note: rather than use a logarithmic scale for a logarithmic axis (in which case all our range computations, e.g., to
 //       autorange, zoom, pan, or pinch, would have to be done in logarithmic space), we plot the decimal logarithm of
@@ -4992,25 +4970,36 @@ const actualValue = (axisKey: AxisKey, value: number): number => {
   return logAxes.value[axisKey] ? 10 ** value : value;
 };
 
-const plotValues = (axisKey: AxisKey, values: Float64Array): Float64Array => {
-  // Return the values that we plot for the given actual values along the given axis.
-  // Note: this gets called for all our data whenever it gets updated (e.g., several times a second while a simulation
-  //       is running), so rather than call plotValue() for each value (which would check whether our axis is
-  //       logarithmic, i.e. access a reactive property, for each value), we check it once and inline the conversion,
-  //       which is about ten times faster.
+// The values that we plot for our traces, i.e. their actual values or, along a logarithmic axis, their decimal
+// logarithm, as well as the statistics of those values (i.e. their range and whether they are sorted).
+// Note: our data gets updated whenever new data is given to us (e.g., many times a second while a simulation is
+//       running), typically with a few more values each time, so we process our values incrementally (see
+//       traceValues.ts), i.e. updating a trace with N new values costs O(N) rather than O(number of values).
 
-  if (!logAxes.value[axisKey]) {
-    return values;
+interface IPlottedAxisValues {
+  log: ILogValues | undefined; // The decimal logarithm of our actual values, if our axis is logarithmic.
+  statistics: IValuesStatistics | undefined; // The statistics of the values that we plot.
+}
+
+type IPlottedValues = Record<AxisKey, IPlottedAxisValues>;
+
+let plottedValues: IPlottedValues[] = [];
+
+const plotValues = (axisKey: AxisKey, values: Float64Array, plotted: IPlottedAxisValues): Float64Array => {
+  // Return the values that we plot for the given actual values along the given axis, keeping track of them and of their
+  // statistics.
+
+  let res = values;
+
+  if (logAxes.value[axisKey]) {
+    plotted.log = logValues(values, plotted.log);
+
+    res = plotted.log.values;
+  } else {
+    plotted.log = undefined;
   }
 
-  const nbOfValues = values.length;
-  const res = new Float64Array(nbOfValues);
-
-  for (let i = 0; i < nbOfValues; ++i) {
-    const value = values[i] as number;
-
-    res[i] = value > 0 ? Math.log10(value) : Number.NaN;
-  }
+  plotted.statistics = valuesStatistics(res, plotted.statistics);
 
   return res;
 };
@@ -5021,9 +5010,22 @@ const plotData = (): uPlot.AlignedData => {
   // Note #2: uPlot needs at least one series, hence we use an empty one if we have no traces.
 
   const traces = props.data.traces;
-  const data = traces.map((trace: IPlotTrace) => [plotValues('x', trace.x), plotValues('y', trace.y)]);
 
-  sortedXValues = data.map(([xValues]) => isSorted(xValues as Float64Array));
+  plottedValues = traces.map(
+    (_trace: IPlotTrace, index: number): IPlottedValues =>
+      plottedValues[index] ?? {
+        x: { log: undefined, statistics: undefined },
+        y: { log: undefined, statistics: undefined }
+      }
+  );
+
+  const data = traces.map((trace: IPlotTrace, index: number) => {
+    const plotted = plottedValues[index] as IPlottedValues;
+
+    return [plotValues('x', trace.x, plotted.x), plotValues('y', trace.y, plotted.y)];
+  });
+
+  sortedXValues = plottedValues.map((plotted: IPlottedValues) => plotted.x.statistics?.sorted ?? false);
 
   return [
     null,
@@ -5064,7 +5066,8 @@ const createPlot = (width: number, height: number): void => {
       facets: [
         { scale: 'x', auto: true },
         { scale: 'y', auto: true }
-      ]
+      ],
+      auto: false // Note: we determine the range of our data ourselves (see naturalRange()).
     } as uPlot.Series);
   }
 
