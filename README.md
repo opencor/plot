@@ -103,6 +103,8 @@ trace.y = buffer.subarray(0, nbOfValues);
 | `renderer` | `'auto' \| 'canvas' \| 'webgl'` | `'auto'` | What to draw traces with. `'auto'` uses whichever is faster for the browser and the data: WebGL in Firefox, and in other browsers only when the visible traces whose X values are not sorted (e.g., phase plots) have at least 1,000,000 points between them; Canvas 2D otherwise. With `'webgl'`, traces are not drawn if WebGL is not available. Whenever WebGL is used, Canvas 2D takes over if WebGL is not available (with `'auto'`) or not precise enough for the current ranges (e.g., when zoomed in a lot). |
 | `levelOfDetail` | `boolean` | `true` | Whether to only go through the points that are needed for a trace to look the same. Only meant to be disabled to see how much it helps. |
 
+To draw traces like a plain uPlot plot would, i.e. without any of our optimisations, use `renderer="canvas"` and `:levelOfDetail="false"`. uPlot then draws every point of every trace on its canvas, using our path builder. Unlike uPlot's own, our path builder handles gaps (`NaN` values) and traces whose X values are not sorted (e.g., phase plots) at any number of points. This is also the reference that our optimisations can be benchmarked against.
+
 ### Events
 
 | Event | Payload | Description |
