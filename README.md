@@ -4,7 +4,7 @@
 
 Key characteristics:
 - Built as a [Vue 3](https://vuejs.org/) component using the [Composition API](https://vuejs.org/guide/extras/composition-api-faq).
-- Uses [uPlot](https://github.com/leeoniya/uPlot) under the hood with [WebGL](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API) for rendering traces (and a Canvas 2D fallback when WebGL is not available or not precise enough, e.g. when zoomed in a lot).
+- Uses [uPlot](https://github.com/leeoniya/uPlot) under the hood, and draws traces using Canvas 2D or [WebGL](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API), whichever is faster for the browser and the data.
 - It does not rely on any UI framework (e.g., [PrimeVue](https://www.primefaces.org/primevue/)) or CSS framework (e.g., [Tailwind CSS](https://tailwindcss.com/)).
 
 ## Installation
@@ -100,7 +100,7 @@ trace.y = buffer.subarray(0, nbOfValues);
 | `margins` | `IPlotMargins` | | Margins shared with other plots, so that their plotting areas line up (see `marginsUpdated`). |
 | `appendTo` | `HTMLElement \| string` | `body` | Where to append our overlays (context menu, hover tooltip, etc.). |
 | `customContextMenu` | `boolean` | `false` | Whether to emit a `contextMenu` event rather than show our own context menu. |
-| `renderer` | `'auto' \| 'canvas' \| 'webgl'` | `'auto'` | What to draw traces with. `'auto'` uses WebGL if it is available, and Canvas 2D otherwise. With `'webgl'`, traces are not drawn if WebGL is not available. With `'auto'` or `'webgl'`, Canvas 2D is used whenever WebGL is not precise enough for the current ranges (e.g., when zoomed in a lot). |
+| `renderer` | `'auto' \| 'canvas' \| 'webgl'` | `'auto'` | What to draw traces with. `'auto'` uses whichever is faster for the browser and the data: WebGL in Firefox, and in other browsers only when the visible traces whose X values are not sorted (e.g., phase plots) have at least 1,000,000 points between them; Canvas 2D otherwise. With `'webgl'`, traces are not drawn if WebGL is not available. Whenever WebGL is used, Canvas 2D takes over if WebGL is not available (with `'auto'`) or not precise enough for the current ranges (e.g., when zoomed in a lot). |
 | `levelOfDetail` | `boolean` | `true` | Whether to only go through the points that are needed for a trace to look the same. Only meant to be disabled to see how much it helps. |
 
 ### Events

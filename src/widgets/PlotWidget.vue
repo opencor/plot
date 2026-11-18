@@ -224,9 +224,9 @@ export type IPlotCsvExportEvent =
 
 export type PlotTheme = 'system' | 'light' | 'dark';
 
-// Our renderer, i.e. what we should use to draw our traces: WebGL, if available, or Canvas 2D otherwise ('auto'), WebGL
-// ('webgl'), or Canvas 2D ('canvas'). Also, the renderer that we actually used to draw our traces the last time our
-// plot got drawn ('none' meaning that they couldn't be drawn, see Note #3 below).
+// Our renderer, i.e. what we should use to draw our traces: whatever is best for the browser and our traces ('auto',
+// see useCanvas2D()), Canvas 2D ('canvas'), or WebGL ('webgl'). Also, the renderer that we actually used to draw our
+// traces the last time our plot got drawn ('none' meaning that they couldn't be drawn, see Note #3 below).
 
 export type PlotRenderer = 'auto' | 'canvas' | 'webgl';
 export type PlotActiveRenderer = 'canvas' | 'webgl' | 'none';
@@ -4384,6 +4384,7 @@ interface ILinearPathPoints {
 let traceLods: levelOfDetailUtils.ILevelOfDetail[] = [];
 let canvasLodUses: ILodUse[] = [];
 let hoverLodUses: ILodUse[] = [];
+let autoLodUses: ILodUse[] = [];
 
 const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
   // Return the level of detail of the given trace, creating it if needed (see Note #4 above).
@@ -4567,11 +4568,12 @@ const markerPaths: uPlot.Series.Points.PathBuilder = (u: uPlot, seriesIndex: num
 
 // GPU rendering of our traces and markers (see gpuPlotRenderer.ts).
 // Note #1: when a frame gets drawn, we first determine how our traces are to be drawn (see prepareFrame()), i.e. using
-//          WebGL (if it is to be used, is available, and is precise enough for our current ranges, which it may not be
-//          if we are zoomed in a lot), using Canvas 2D, or not at all (if only WebGL is to be used, but it is not
-//          available). Unless Canvas 2D is to be used, our path builders don't build any path for uPlot to draw (see
-//          linearPaths() and our markers' show function). If WebGL is to be used, then we draw our traces ourselves,
-//          once uPlot has drawn everything else (see drawGpuTraces()), which is when uPlot would have drawn them.
+//          WebGL (if it is to be used, see useCanvas2D(), is available, and is precise enough for our current ranges,
+//          which it may not be if we are zoomed in a lot), using Canvas 2D, or not at all (if only WebGL is to be used,
+//          but it is not available). Unless Canvas 2D is to be used, our path builders don't build any path for uPlot
+//          to draw (see linearPaths() and our markers' show function). If WebGL is to be used, then we draw our traces
+//          ourselves, once uPlot has drawn everything else (see drawGpuTraces()), which is when uPlot would have drawn
+//          them.
 // Note #2: uPlot caches the paths of our traces, so we invalidate them whenever we switch between drawing our traces
 //          using Canvas 2D and not.
 // Note #3: our exports don't rely on what gets drawn (see svgDocument()), so they are not affected.
@@ -4623,12 +4625,79 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
   return res;
 };
 
+// Whether our traces are to be drawn using Canvas 2D rather than WebGL when our renderer is 'auto', based on how both
+// renderers perform in different browsers (using our demo's benchmark, which zooms and pans our traces):
+//  - Chrome: Canvas 2D is faster (1.3 to 2.7 times) for traces which X values are sorted, thanks to our level of
+//    detail (see linearPathPoints()), but WebGL is much faster (2 to 6 times) for traces which X values are not sorted
+//    (e.g., a phase plot), since all of their points need to be drawn;
+//  - Safari: like Chrome, except that WebGL is much slower than Canvas 2D (about 10 times) when there are many plots
+//    (e.g., 16 of them); and
+//  - Firefox: Canvas 2D takes a very long time to stroke a dense trace that goes up and down (e.g., noisy data), which
+//    nothing on our side can avoid (we tried using different line joins, stroking a trace in chunks, and drawing it
+//    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
+// So, we use Canvas 2D in browsers other than Firefox, unless our visible traces which X values are not sorted have at
+// least AUTO_WEBGL_MIN_UNSORTED_POINTS points between them.
+// Note: we only check whether the X values of a trace are sorted (using its level of detail, see
+//       levelOfDetailUtils.ts) if our visible traces have enough points between them for it to matter, so that we
+//       don't create a level of detail for a trace that doesn't otherwise need one.
+
+const AUTO_WEBGL_MIN_UNSORTED_POINTS = 1000000;
+
+const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox/');
+
+const useCanvas2D = (u: uPlot): boolean => {
+  // Return whether our traces are to be drawn using Canvas 2D rather than WebGL (see above).
+
+  if (props.renderer !== 'auto') {
+    return props.renderer === 'canvas';
+  }
+
+  if (isFirefox) {
+    return false;
+  }
+
+  // Determine the number of points of our visible traces, and make sure that they have enough of them for our check to
+  // matter.
+
+  const visibleTraces: [traceIndex: number, xValues: Float64Array, yValues: Float64Array, nbOfPoints: number][] = [];
+  let nbOfPoints = 0;
+
+  for (let seriesIndex = 1; seriesIndex < u.series.length; ++seriesIndex) {
+    const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
+
+    if (u.series[seriesIndex]?.show && xValues && yValues) {
+      const nbOfTracePoints = Math.min(xValues.length, yValues.length);
+
+      visibleTraces.push([seriesIndex - 1, xValues, yValues, nbOfTracePoints]);
+
+      nbOfPoints += nbOfTracePoints;
+    }
+  }
+
+  if (nbOfPoints < AUTO_WEBGL_MIN_UNSORTED_POINTS) {
+    return true;
+  }
+
+  // Determine the number of points of our visible traces which X values are not sorted.
+
+  let nbOfUnsortedPoints = 0;
+
+  for (const [traceIndex, xValues, yValues, nbOfTracePoints] of visibleTraces) {
+    if (updatedTraceLod(autoLodUses, traceIndex, xValues, yValues, nbOfTracePoints).sortedLength < nbOfTracePoints) {
+      nbOfUnsortedPoints += nbOfTracePoints;
+    }
+  }
+
+  return nbOfUnsortedPoints < AUTO_WEBGL_MIN_UNSORTED_POINTS;
+};
+
 const prepareFrame = (u: uPlot): void => {
   // Determine how our traces are to be drawn (see Note #1 above) and, if they are to be drawn using WebGL, keep track
   // of what we need to draw.
 
   const previousFrameRenderer = frameRenderer;
   const area = pathArea(u);
+  const canvas2D = useCanvas2D(u);
 
   frameRenderer = 'canvas';
   gpuFrameItems = [];
@@ -4639,13 +4708,14 @@ const prepareFrame = (u: uPlot): void => {
   // Note: we keep our GPU traces if WebGL is to be used, even if our traces get drawn using Canvas 2D (e.g., if WebGL
   //       is not precise enough for our current ranges), since we will need them again (e.g., once we zoom out).
 
-  disposeGpuTraces(props.renderer === 'canvas' ? 0 : u.series.length - 1);
+  disposeGpuTraces(canvas2D ? 0 : u.series.length - 1);
 
   canvasLodUses = canvasLodUses.slice(0, u.series.length - 1);
   hoverLodUses = hoverLodUses.slice(0, u.series.length - 1);
+  autoLodUses = autoLodUses.slice(0, u.series.length - 1);
   traceLods = traceLods.slice(0, u.series.length - 1);
 
-  if (props.renderer !== 'canvas') {
+  if (!canvas2D) {
     if (gpuPlotRenderer.isAvailable()) {
       warnedAboutWebGlNotBeingAvailable = false;
 
