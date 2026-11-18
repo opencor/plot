@@ -8,7 +8,7 @@ import {
   type IGpuPlotTrace,
   isPrecise
 } from './gpuPlotRenderer';
-import * as levelOfDetail from './levelOfDetail';
+import * as levelOfDetailUtils from './levelOfDetailUtils';
 
 // A fake WebGL 2 context, since there is no WebGL in our test environment.
 // Note #1: our fake context records the calls that are made to it, and keeps track of the contents of its buffers, so
@@ -599,7 +599,7 @@ describe('render()', () => {
 describe('level of detail', () => {
   // Our plotting area has 400 columns (i.e. 4 per pixel), so our level of detail gets used for a trace with more than
   // 3,200 (visible) points (see LOD_COLUMNS_PER_PIXEL in gpuPlotRenderer.ts and MIN_POINTS_PER_COLUMN in
-  // levelOfDetail.ts).
+  // levelOfDetailUtils.ts).
 
   const NB_OF_POINTS = 10000;
   const LOD_AREA: IGpuPlotArea = { ...AREA, xMin: 1, xMax: NB_OF_POINTS };
@@ -619,12 +619,12 @@ describe('level of detail', () => {
     // first point and as 32-bit floats, i.e. what our renderer should upload.
 
     const nbOfPoints = Math.min(xValues.length, yValues.length);
-    const lod = levelOfDetail.create();
+    const lod = levelOfDetailUtils.create();
 
-    levelOfDetail.update(lod, xValues, yValues, nbOfPoints);
+    levelOfDetailUtils.update(lod, xValues, yValues, nbOfPoints);
 
-    const [start, end] = levelOfDetail.visibleRange(xValues, nbOfPoints, area.xMin, area.xMax);
-    const selection = levelOfDetail.selectPoints(
+    const [start, end] = levelOfDetailUtils.visibleRange(xValues, nbOfPoints, area.xMin, area.xMax);
+    const selection = levelOfDetailUtils.selectPoints(
       lod,
       xValues,
       yValues,
@@ -633,7 +633,7 @@ describe('level of detail', () => {
       area.xMin,
       area.xMax,
       4 * area.width
-    ) as levelOfDetail.ISelection;
+    ) as levelOfDetailUtils.ISelection;
 
     return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) => [
       Math.fround((xValues[index] as number) - (xValues[0] as number)),
@@ -729,6 +729,26 @@ describe('level of detail', () => {
     expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS]]);
   });
 
+  it('draws all the points of a trace with many sorted points if its level of detail is not to be used', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, { ...LOD_AREA, xMin: 1000, xMax: 1100 }, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 2, levelOfDetail: false }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([
+      [0, NB_OF_POINTS - 1],
+      [0, NB_OF_POINTS]
+    ]);
+  });
+
   it('draws all the points of a trace with many unsorted points', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();
@@ -799,7 +819,7 @@ describe('level of detail', () => {
     expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
 
     // If nothing changed, then only the points of our last column get selected and uploaded again (since our last
-    // point is always assumed to have possibly changed, see Note #5 of levelOfDetail.ts).
+    // point is always assumed to have possibly changed, see Note #5 of levelOfDetailUtils.ts).
 
     fake.calls.length = 0;
 

@@ -1,4 +1,4 @@
-import * as levelOfDetail from './levelOfDetail';
+import * as levelOfDetailUtils from './levelOfDetailUtils';
 import { isContinuationOf } from './traceValues';
 
 // A GPU-based renderer for the traces (and their markers) of our plots (see PlotWidget.vue).
@@ -30,9 +30,9 @@ import { isContinuationOf } from './traceValues';
 //          GAP_THRESHOLD is discarded by our vertex shader, so that a gap in the data is drawn as a gap in the trace.
 // Note #7: if the X values of a trace are sorted, then we only draw its visible points. Also, if it has many more
 //          visible points than there are columns (see below), then we only draw the points that are needed for its line
-//          to look the same (see levelOfDetail.ts), which we keep in a separate buffer. This means that drawing the
-//          line of a trace costs O(number of columns) rather than O(number of points). Also, if the X range is the same
-//          as before (e.g., while a simulation is running), then only the selection of the columns from the first
+//          to look the same (see levelOfDetailUtils.ts), which we keep in a separate buffer. This means that drawing
+//          the line of a trace costs O(number of columns) rather than O(number of points). Also, if the X range is the
+//          same as before (e.g., while a simulation is running), then only the selection of the columns from the first
 //          point that may have changed gets updated and uploaded, i.e. drawing a few more points costs O(number of new
 //          points). The points of a column are not drawn exactly where they would be, but they are all within that
 //          column, so we use LOD_COLUMNS_PER_PIXEL columns per pixel, so that what we draw is within a quarter of a
@@ -336,7 +336,12 @@ interface IGpuPlotTraceInternals extends IGpuPlotTrace {
   originY: () => number;
   maxAbsX: () => number;
   maxAbsY: () => number;
-  drawnPoints: (context: WebGL2RenderingContext, area: IGpuPlotArea, lineWidth: number) => IDrawnPoints;
+  drawnPoints: (
+    context: WebGL2RenderingContext,
+    area: IGpuPlotArea,
+    lineWidth: number,
+    useLevelOfDetail: boolean
+  ) => IDrawnPoints;
 }
 
 // Rendering.
@@ -360,6 +365,7 @@ export interface IGpuPlotItem {
   alpha: number;
   lineWidth: number; // In canvas pixels.
   markerSize: number; // In canvas pixels, with zero meaning no markers.
+  levelOfDetail?: boolean; // Whether to only draw the points that are needed (see Note #7 above), true by default.
 }
 
 const axisFactors = (area: IGpuPlotArea): [number, number] => {
@@ -524,7 +530,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     let originY = 0;
     let maxAbsX = 0;
     let maxAbsY = 0;
-    let lod = levelOfDetail.create();
+    let lod = levelOfDetailUtils.create();
     let selectionBuffer: WebGLBuffer | null = null;
     let selectionBufferGeneration = -1;
     let selectionBufferCapacity = 0;
@@ -556,7 +562,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       xValues = newXValues;
       yValues = newYValues;
 
-      levelOfDetail.invalidate(lod, start);
+      levelOfDetailUtils.invalidate(lod, start);
 
       // Use the first finite point as our origin, if we are uploading all of our data.
 
@@ -633,14 +639,14 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       count = 0;
       xValues = undefined;
       yValues = undefined;
-      lod = levelOfDetail.create();
+      lod = levelOfDetailUtils.create();
       selectionBuffer = null;
       selectionBufferCapacity = 0;
     };
 
     const uploadSelection = (
       context: WebGL2RenderingContext,
-      selection: levelOfDetail.ISelection,
+      selection: levelOfDetailUtils.ISelection,
       xs: Float64Array,
       ys: Float64Array
     ): WebGLBuffer | null => {
@@ -703,28 +709,34 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       return selectionBuffer;
     };
 
-    const drawnPoints = (context: WebGL2RenderingContext, area: IGpuPlotArea, lineWidth: number): IDrawnPoints => {
-      // Return the points that we need to draw for the given plotting area (see Note #7 above), i.e. all of our points,
-      // or only our visible points if our X values are sorted and, for our line, possibly only some of them.
+    const drawnPoints = (
+      context: WebGL2RenderingContext,
+      area: IGpuPlotArea,
+      lineWidth: number,
+      useLevelOfDetail: boolean
+    ): IDrawnPoints => {
+      // Return the points that we need to draw for the given plotting area (see Note #7 above), i.e. all of our points
+      // (always if we are not to use our level of detail), or only our visible points if our X values are sorted and,
+      // for our line, possibly only some of them.
 
       const res: IDrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
       const nbOfColumns = Math.max(1, Math.ceil(LOD_COLUMNS_PER_PIXEL * area.width));
-      const minNbOfPoints = levelOfDetail.MIN_POINTS_PER_COLUMN * nbOfColumns;
+      const minNbOfPoints = levelOfDetailUtils.MIN_POINTS_PER_COLUMN * nbOfColumns;
 
-      if (!xValues || !yValues || count <= minNbOfPoints) {
+      if (!useLevelOfDetail || !xValues || !yValues || count <= minNbOfPoints) {
         return res;
       }
 
       // Only draw our visible points, if our X values are sorted.
       // Note: we update our level of detail lazily since it is only needed for traces with many points.
 
-      levelOfDetail.update(lod, xValues, yValues, count);
+      levelOfDetailUtils.update(lod, xValues, yValues, count);
 
       if (lod.sortedLength < count) {
         return res;
       }
 
-      [res.start, res.end] = levelOfDetail.visibleRange(xValues, count, area.xMin, area.xMax);
+      [res.start, res.end] = levelOfDetailUtils.visibleRange(xValues, count, area.xMin, area.xMax);
 
       res.lineStart = res.start;
       res.lineEnd = res.end;
@@ -736,7 +748,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         return res;
       }
 
-      const selection = levelOfDetail.selectPoints(
+      const selection = levelOfDetailUtils.selectPoints(
         lod,
         xValues,
         yValues,
@@ -968,7 +980,12 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         areaBottom + 0.5 * item.lineWidth
       );
 
-      const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(context, area, item.lineWidth);
+      const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(
+        context,
+        area,
+        item.lineWidth,
+        item.levelOfDetail ?? true
+      );
       let nbOfDrawnPoints = 0;
 
       if (lineBuffer && lineEnd - lineStart > 1 && item.lineWidth > 0) {

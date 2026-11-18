@@ -73,6 +73,10 @@
         </select>
       </label>
       <label>
+        <input v-model="levelOfDetail" type="checkbox" />
+        Level of detail
+      </label>
+      <label>
         <input v-model="showLegend" type="checkbox" />
         Legend
       </label>
@@ -97,6 +101,7 @@
           :data="data"
           :theme="instanceTheme(index)"
           :renderer="renderer"
+          :levelOfDetail="levelOfDetail"
           :showLegend="showLegend"
           :customContextMenu="customContextMenu"
           @contextMenu="(event) => onContextMenu(event, index)"
@@ -149,6 +154,7 @@ const nbOfPoints = vue.ref<number>(1000);
 const nbOfInstances = vue.ref<number>(1);
 const theme = vue.ref<PlotTheme | 'mixed'>('system');
 const renderer = vue.ref<PlotRenderer>('auto');
+const levelOfDetail = vue.ref<boolean>(true);
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
 const live = vue.ref<boolean>(false);

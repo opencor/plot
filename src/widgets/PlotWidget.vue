@@ -161,7 +161,7 @@ import {
   type IGpuPlotTrace,
   isPrecise as isGpuPlotPrecise
 } from '../common/gpuPlotRenderer';
-import * as levelOfDetail from '../common/levelOfDetail';
+import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
 import { isContinuationOf } from '../common/traceValues';
 
 import '../assets/theme.css';
@@ -257,6 +257,9 @@ export interface IPlotContextMenuEvent {
 //          get drawn if WebGL is not available (e.g., if it is disabled or if our WebGL context is lost), but they get
 //          drawn using Canvas 2D if WebGL is not precise enough for our current ranges (e.g., if we are zoomed in a
 //          lot), since they would otherwise visibly be in the wrong place (see isPrecise() in gpuPlotRenderer.ts).
+// Note #4: levelOfDetail is whether we should only go through the points that are needed for our traces to look the
+//          same (see linearPathPoints() and Note #7 of gpuPlotRenderer.ts), which is what we should normally do. It
+//          can, however, be disabled to see (e.g., in our demo) how much it helps.
 
 const props = withDefaults(
   defineProps<{
@@ -267,12 +270,14 @@ const props = withDefaults(
     appendTo?: HTMLElement | string;
     customContextMenu?: boolean;
     renderer?: PlotRenderer;
+    levelOfDetail?: boolean;
   }>(),
   {
     showLegend: true,
     theme: 'system',
     customContextMenu: false,
-    renderer: 'auto'
+    renderer: 'auto',
+    levelOfDetail: true
   }
 );
 
@@ -4297,8 +4302,8 @@ const linearPath = (
 // Note #1: linearPath() only draws the first, minimum, maximum, and last points of each pixel column, but it still has
 //          to go through all the points of our trace to find them, i.e. it costs O(number of points). So, if the X
 //          values of our trace are sorted and it has many more visible points than there are pixel columns, then we
-//          first select those points using our level of detail (see levelOfDetail.ts), which costs O(number of pixel
-//          columns), and only give them to linearPath().
+//          first select those points using our level of detail (see levelOfDetailUtils.ts), which costs O(number of
+//          pixel columns), and only give them to linearPath().
 // Note #2: our columns are our pixel columns (i.e. those of linearPath()), so our selected points include all the
 //          points that linearPath() would draw, i.e. our trace looks exactly the same.
 // Note #3: like our GPU plot renderer, we keep our level of detail up to date incrementally (see traceValues.ts).
@@ -4307,7 +4312,7 @@ interface ICanvasTrace {
   xValues: Float64Array | undefined; // X values for which our level of detail was last updated.
   yValues: Float64Array | undefined; // Y values for which our level of detail was last updated.
   count: number; // Number of points for which our level of detail was last updated.
-  lod: levelOfDetail.ILevelOfDetail; // Our level of detail.
+  lod: levelOfDetailUtils.ILevelOfDetail; // Our level of detail.
 }
 
 interface ILinearPathPoints {
@@ -4329,15 +4334,16 @@ const linearPathPoints = (
   index1: number,
   area: IPathArea
 ): ILinearPathPoints => {
-  // Return the points of the given trace that linearPath() needs to go through (see Note #1 above).
+  // Return the points of the given trace that linearPath() needs to go through (see Note #1 above), i.e. all of them if
+  // we are not to use our level of detail (see Note #4 of our props).
 
   const res: ILinearPathPoints = { xValues, yValues, index0, index1 };
   const count = Math.min(xValues.length, yValues.length);
   const nbOfColumns = Math.ceil(area.width) + 1;
-  const minNbOfPoints = levelOfDetail.MIN_POINTS_PER_COLUMN * nbOfColumns;
+  const minNbOfPoints = levelOfDetailUtils.MIN_POINTS_PER_COLUMN * nbOfColumns;
   const xFactor = area.width / (area.xMax - area.xMin);
 
-  if (count <= minNbOfPoints || !(xFactor > 0) || !Number.isFinite(xFactor)) {
+  if (!props.levelOfDetail || count <= minNbOfPoints || !(xFactor > 0) || !Number.isFinite(xFactor)) {
     return res;
   }
 
@@ -4347,7 +4353,7 @@ const linearPathPoints = (
     xValues: undefined,
     yValues: undefined,
     count: 0,
-    lod: levelOfDetail.create()
+    lod: levelOfDetailUtils.create()
   };
 
   const trace = canvasTraces[seriesIndex - 1] as ICanvasTrace;
@@ -4356,8 +4362,8 @@ const linearPathPoints = (
       ? Math.min(trace.count - 1, count)
       : 0;
 
-  levelOfDetail.invalidate(trace.lod, from);
-  levelOfDetail.update(trace.lod, xValues, yValues, count);
+  levelOfDetailUtils.invalidate(trace.lod, from);
+  levelOfDetailUtils.update(trace.lod, xValues, yValues, count);
 
   trace.xValues = xValues;
   trace.yValues = yValues;
@@ -4369,7 +4375,7 @@ const linearPathPoints = (
     return res;
   }
 
-  const [start, end] = levelOfDetail.visibleRange(xValues, count, area.xMin, area.xMax);
+  const [start, end] = levelOfDetailUtils.visibleRange(xValues, count, area.xMin, area.xMax);
 
   res.index0 = start;
   res.index1 = end - 1;
@@ -4384,7 +4390,7 @@ const linearPathPoints = (
 
   const xMin = area.xMin + (Math.round(area.left) - 0.5 - area.left) / xFactor;
   const xMax = xMin + nbOfColumns / xFactor;
-  const selection = levelOfDetail.selectPoints(trace.lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
+  const selection = levelOfDetailUtils.selectPoints(trace.lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
 
   if (!selection) {
     return res;
@@ -4533,7 +4539,8 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
       color,
       alpha: seriesAlpha(seriesIndex - 1),
       lineWidth: LINE_WIDTH * pxRatio,
-      markerSize: hasMarkers(xValues, yValues) ? MARKER_SIZE * pxRatio : 0
+      markerSize: hasMarkers(xValues, yValues) ? MARKER_SIZE * pxRatio : 0,
+      levelOfDetail: props.levelOfDetail
     });
   }
 
@@ -5430,10 +5437,11 @@ vue.watch(
   }
 );
 
-// Redraw our plot when our renderer changes, so that our traces get drawn using it (see prepareFrame()).
+// Redraw our plot when our renderer changes, so that our traces get drawn using it (see prepareFrame()), or when we are
+// to use our level of detail or not.
 
 vue.watch(
-  () => props.renderer,
+  () => [props.renderer, props.levelOfDetail],
   () => {
     plot?.redraw(true);
   }

@@ -8,7 +8,7 @@ import {
   selectPoints,
   update,
   visibleRange
-} from './levelOfDetail';
+} from './levelOfDetailUtils';
 
 // Some helpers.
 
@@ -63,7 +63,7 @@ const checkSelection = (
   // number of columns, i.e. that, for each range of points (see selectPoints()), all of its points are selected if it
   // has up to four of them, or its first and last points, as well as points with its minimum and maximum Y values, and
   // no more than four points in total, otherwise.
-  // Note: we determine our ranges of points in a brute-force way, i.e. without relying on levelOfDetail.ts.
+  // Note: we determine our ranges of points in a brute-force way, i.e. without relying on levelOfDetailUtils.ts.
 
   if (selection === undefined) {
     throw new Error('No selection.');
