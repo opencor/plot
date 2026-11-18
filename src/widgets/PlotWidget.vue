@@ -459,8 +459,12 @@ const memoryUsage = (): IPlotMemoryUsage => {
     }
   }
 
-  for (const plotted of plottedValues) {
-    res.logValues += (plotted.x.log?.buffer.byteLength ?? 0) + (plotted.y.log?.buffer.byteLength ?? 0);
+  for (const arrays of Object.values(plottedArrays)) {
+    for (const arrayValues of arrays.values()) {
+      for (const plotted of arrayValues.values()) {
+        res.logValues += plotted.log?.buffer.byteLength ?? 0;
+      }
+    }
   }
 
   return res;
@@ -5037,34 +5041,74 @@ const actualValue = (axisKey: AxisKey, value: number): number => {
 
 // The values that we plot for our traces, i.e. their actual values or, along a logarithmic axis, their decimal
 // logarithm, as well as the statistics of those values (i.e. their range and whether they are sorted).
-// Note: our data gets updated whenever new data is given to us (e.g., many times a second while a simulation is
-//       running), typically with a few more values each time, so we process our values incrementally (see
-//       traceValues.ts), i.e. updating a trace with N new values costs O(N) rather than O(number of values).
+// Note #1: our data gets updated whenever new data is given to us (e.g., many times a second while a simulation is
+//          running), typically with a few more values each time, so we process our values incrementally (see
+//          traceValues.ts), i.e. updating a trace with N new values costs O(N) rather than O(number of values).
+// Note #2: our traces may share their values (e.g., their X values), so we keep track of the values that we plot per
+//          array of actual values (identified by its buffer and offset, so that a continuation of it, see
+//          traceValues.ts, is identified as the same array) rather than per trace. This means that shared values only
+//          get processed once and that their logarithm only gets computed (and stored) once. Also, we only keep track
+//          of the arrays that we are plotting, so that we don't keep the logarithm of values that we don't plot
+//          anymore.
 
 interface IPlottedAxisValues {
+  source: Float64Array | undefined; // The actual values that we last processed.
+  values: Float64Array; // The values that we plot for them.
   log: ILogValues | undefined; // The decimal logarithm of our actual values, if our axis is logarithmic.
   statistics: IValuesStatistics | undefined; // The statistics of the values that we plot.
 }
 
 type IPlottedValues = Record<AxisKey, IPlottedAxisValues>;
+type IPlottedArrays = Map<ArrayBufferLike, Map<number, IPlottedAxisValues>>; // By buffer and then by offset.
 
-let plottedValues: IPlottedValues[] = [];
+let plottedValues: IPlottedValues[] = []; // The values that we plot for each of our traces.
+let plottedArrays: Record<AxisKey, IPlottedArrays> = { x: new Map(), y: new Map() }; // See Note #2 above.
 
-const plotValues = (axisKey: AxisKey, values: Float64Array, plotted: IPlottedAxisValues): Float64Array => {
+const plotValues = (
+  axisKey: AxisKey,
+  values: Float64Array,
+  previousArrays: IPlottedArrays,
+  arrays: IPlottedArrays
+): IPlottedAxisValues => {
   // Return the values that we plot for the given actual values along the given axis, keeping track of them and of their
-  // statistics.
+  // statistics (see Note #2 above).
 
-  let res = values;
+  let arrayValues = arrays.get(values.buffer);
 
-  if (logAxes.value[axisKey]) {
-    plotted.log = logValues(values, plotted.log);
+  if (!arrayValues) {
+    arrayValues = new Map();
 
-    res = plotted.log.values;
-  } else {
-    plotted.log = undefined;
+    arrays.set(values.buffer, arrayValues);
   }
 
-  plotted.statistics = valuesStatistics(res, plotted.statistics);
+  // Reuse what we have already done for the given values, if they have already been processed (i.e. if another of our
+  // traces shares them), or carry on from what we did for them the last time our data got updated, if anything.
+
+  let res = arrayValues.get(values.byteOffset);
+
+  if (res?.source === values) {
+    return res;
+  }
+
+  res ??= previousArrays.get(values.buffer)?.get(values.byteOffset) ?? {
+    source: undefined,
+    values,
+    log: undefined,
+    statistics: undefined
+  };
+
+  if (logAxes.value[axisKey]) {
+    res.log = logValues(values, res.log);
+    res.values = res.log.values;
+  } else {
+    res.log = undefined;
+    res.values = values;
+  }
+
+  res.source = values;
+  res.statistics = valuesStatistics(res.values, res.statistics);
+
+  arrayValues.set(values.byteOffset, res);
 
   return res;
 };
@@ -5074,21 +5118,17 @@ const plotData = (): uPlot.AlignedData => {
   // Note #1: we also keep track of whether the X values of our traces are sorted (see updateHover()).
   // Note #2: uPlot needs at least one series, hence we use an empty one if we have no traces.
 
-  const traces = props.data.traces;
+  const arrays: Record<AxisKey, IPlottedArrays> = { x: new Map(), y: new Map() };
 
-  plottedValues = traces.map(
-    (_trace: IPlotTrace, index: number): IPlottedValues =>
-      plottedValues[index] ?? {
-        x: { log: undefined, statistics: undefined },
-        y: { log: undefined, statistics: undefined }
-      }
+  plottedValues = props.data.traces.map(
+    (trace: IPlotTrace): IPlottedValues => ({
+      x: plotValues('x', trace.x, plottedArrays.x, arrays.x),
+      y: plotValues('y', trace.y, plottedArrays.y, arrays.y)
+    })
   );
+  plottedArrays = arrays;
 
-  const data = traces.map((trace: IPlotTrace, index: number) => {
-    const plotted = plottedValues[index] as IPlottedValues;
-
-    return [plotValues('x', trace.x, plotted.x), plotValues('y', trace.y, plotted.y)];
-  });
+  const data = plottedValues.map((plotted: IPlottedValues) => [plotted.x.values, plotted.y.values]);
 
   sortedXValues = plottedValues.map((plotted: IPlottedValues) => plotted.x.statistics?.sorted ?? false);
 
