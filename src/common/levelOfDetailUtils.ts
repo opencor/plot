@@ -16,15 +16,22 @@
 // Note #3: like the rest of our data processing (see traceValues.ts), our blocks are kept up to date incrementally,
 //          i.e. if only the last point onwards of a trace may have changed, then we only update the blocks that cover
 //          those points.
-// Note #4: a range of points that has a gap cannot be drawn as described in Note #1 (since the gap would not be shown),
-//          so selectPoints() fails if the visible points of a trace have a gap, in which case all of them have to be
-//          drawn.
-// Note #5: we keep track of the points that we last selected, and of the first point that may have changed since then.
+// Note #4: a range of points that has a gap cannot be drawn as described in Note #1 (since the gap would not be shown).
+//          So, for a range of points that has gaps, we select the first, minimum, maximum, and last points of each run
+//          of finite points, as well as the first point of each gap (so that the gap gets drawn as such). To find our
+//          gaps quickly, we skip the blocks that have no gap (when looking for the next gap) or no finite point (when
+//          looking for the next finite point). A range of points with many gaps may therefore have many selected points
+//          (e.g., all of its points if every other point is a gap), so our selection grows if needed.
+// Note #5: a path (e.g., our Canvas 2D path, see linearPath() in PlotWidget.vue) starts from the first point after a
+//          gap and only then starts drawing the points of a column. So, for a run of finite points that follows a gap,
+//          we select its first point and then the first, minimum, maximum, and last points of the rest of the run, so
+//          that what gets drawn is exactly the same as if all of its points were drawn.
+// Note #6: we keep track of the points that we last selected, and of the first point that may have changed since then.
 //          So, if a trace gets drawn for the same X range and number of columns as before (e.g., while a simulation is
 //          running, with a fixed X range), then we only select the points of the columns from the one that contains
 //          the first point that may have changed, i.e. drawing a few more points costs O(number of new points) rather
 //          than O(number of columns).
-// Note #6: a level of detail may be shared (e.g., by the two renderers of a plot), so each selection has a number, so
+// Note #7: a level of detail may be shared (e.g., by the two renderers of a plot), so each selection has a number, so
 //          that a consumer can tell whether a selection directly follows the one it last used (in which case only its
 //          points from firstChanged onwards may differ from it) or not (in which case all of them may differ).
 
@@ -48,7 +55,7 @@ export interface ISelection {
   start: number; // Index of the first point (included) of the range of points from which our points were selected.
   end: number; // Index of the last point (excluded) of the range of points from which our points were selected.
   validCount: number; // Number of leading points that haven't changed since our points were selected.
-  number: number; // Number of our selection, i.e. of the selections made by our level of detail (see Note #6 above).
+  number: number; // Number of our selection, i.e. of the selections made by our level of detail (see Note #7 above).
 }
 
 export interface ILevelOfDetail {
@@ -56,7 +63,7 @@ export interface ILevelOfDetail {
   sortedLength: number; // Number of leading points whose X values are finite and sorted in increasing order.
   levels: ILevel[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
   selection: ISelection | undefined; // Our last selection of points (see selectPoints()).
-  nbOfSelections: number; // Number of selections that we have made (see Note #6 above).
+  nbOfSelections: number; // Number of selections that we have made (see Note #7 above).
 }
 
 export const create = (): ILevelOfDetail => {
@@ -448,9 +455,135 @@ export const visibleRange = (
 };
 
 const maxNbOfSelectedPoints = (nbOfColumns: number): number => {
-  // Return the maximum number of points that selectPoints() may select for the given number of columns.
+  // Return the maximum number of points that selectPoints() may select for the given number of columns, if our points
+  // have no gap (see Note #4 above).
 
   return 4 * (nbOfColumns + 2);
+};
+
+const selectionIndices = (selection: ISelection, nbOfPoints: number, nbOfNewPoints: number): Int32Array => {
+  // Return the indices of the given selection, which has the given number of points, making sure that it can hold the
+  // given number of new points (see Note #4 above).
+
+  if (nbOfPoints + nbOfNewPoints > selection.indices.length) {
+    const indices = new Int32Array(Math.max(nbOfPoints + nbOfNewPoints, 2 * selection.indices.length));
+
+    indices.set(selection.indices.subarray(0, nbOfPoints));
+
+    selection.indices = indices;
+  }
+
+  return selection.indices;
+};
+
+const skipBlocks = (lod: ILevelOfDetail, yValues: Float64Array, from: number, end: number, gaps: boolean): number => {
+  // Return the index of the first point, from the given point (included) to the given end (excluded), that is a gap (if
+  // we are looking for gaps) or that is finite (otherwise), or the given end if there is none. To do so, we skip the
+  // biggest blocks that we can, i.e. those that have no gap (if we are looking for gaps) or no finite point
+  // (otherwise), see Note #4 above.
+  // Note: a block that extends beyond our end can be skipped too, since none of its points before our end can be what
+  //       we are looking for, in which case we are done.
+
+  const levels = lod.levels;
+  let i = from;
+
+  while (i < end) {
+    let skipped = false;
+
+    for (let levelIndex = i % BLOCK_SIZE === 0 ? levels.length - 1 : -1; levelIndex >= 0; --levelIndex) {
+      const blockSize = BLOCK_SIZE ** (levelIndex + 1);
+
+      if (i % blockSize === 0) {
+        const level = levels[levelIndex] as ILevel;
+        const block = i / blockSize;
+
+        if (gaps ? level.gap[block] === 0 : level.min[block] === -1) {
+          i += blockSize;
+          skipped = true;
+
+          break;
+        }
+      }
+    }
+
+    if (!skipped) {
+      const y = yValues[i] as number;
+
+      if ((y - y !== 0) === gaps) {
+        return i;
+      }
+
+      ++i;
+    }
+  }
+
+  return Math.min(i, end);
+};
+
+const selectRunPoints = (
+  selection: ISelection,
+  nbOfPoints: number,
+  start: number,
+  end: number,
+  minIndex: number,
+  maxIndex: number
+): number => {
+  // Select the first point of the given run of finite points, its points with the given minimum and maximum Y values
+  // (in order), and its last point, add their index to the given selection (which already has the given number of
+  // points), and return the new number of points.
+
+  const indices = selectionIndices(selection, nbOfPoints, 4);
+  const last = end - 1;
+  const firstExtremum = Math.min(minIndex, maxIndex);
+  const secondExtremum = Math.max(minIndex, maxIndex);
+  let res = nbOfPoints;
+
+  indices[res++] = start;
+
+  if (firstExtremum > start && firstExtremum < last) {
+    indices[res++] = firstExtremum;
+  }
+
+  if (secondExtremum > start && secondExtremum < last && secondExtremum !== firstExtremum) {
+    indices[res++] = secondExtremum;
+  }
+
+  if (last > start) {
+    indices[res++] = last;
+  }
+
+  return res;
+};
+
+const selectFiniteRunPoints = (
+  lod: ILevelOfDetail,
+  yValues: Float64Array,
+  start: number,
+  end: number,
+  selection: ISelection,
+  nbOfPoints: number,
+  minIndex: number,
+  maxIndex: number
+): number => {
+  // Select the points of the given run of finite points, which minimum and maximum Y values are known, if it doesn't
+  // follow a gap. Otherwise, select its first point and the points of the rest of it (see Note #5 above).
+
+  if (start === 0 || (yValues[start - 1] as number) - (yValues[start - 1] as number) === 0 || end - start === 1) {
+    return selectRunPoints(selection, nbOfPoints, start, end, minIndex, maxIndex);
+  }
+
+  selectionIndices(selection, nbOfPoints, 1)[nbOfPoints] = start;
+
+  query(lod, yValues, start + 1, end);
+
+  return selectRunPoints(
+    selection,
+    nbOfPoints + 1,
+    start + 1,
+    end,
+    queryResult[QUERY_MIN_INDEX] as number,
+    queryResult[QUERY_MAX_INDEX] as number
+  );
 };
 
 const selectRangePoints = (
@@ -458,42 +591,80 @@ const selectRangePoints = (
   yValues: Float64Array,
   start: number,
   end: number,
-  output: Int32Array,
+  selection: ISelection,
   nbOfPoints: number
 ): number => {
-  // Select the first point of the given range, its points with the minimum and maximum Y values (in order), and its
-  // last point, add their index to the given output (which already has the given number of points), and return the
-  // new number of points.
+  // Select the points of the given range (see Note #1 and Note #4 above), add their index to the given selection (which
+  // already has the given number of points), and return the new number of points.
 
-  let res = nbOfPoints;
+  // Select all the points of a range that has up to four of them.
 
   if (end - start <= 4) {
+    const indices = selectionIndices(selection, nbOfPoints, end - start);
+    let res = nbOfPoints;
+
     for (let i = start; i < end; ++i) {
-      output[res++] = i;
+      indices[res++] = i;
     }
 
     return res;
   }
 
+  // Select the first, minimum, maximum, and last points of a range that has no gap.
+
   query(lod, yValues, start, end);
 
-  const last = end - 1;
-  const minIndex = queryResult[QUERY_MIN_INDEX] as number;
-  const maxIndex = queryResult[QUERY_MAX_INDEX] as number;
-  const firstExtremum = Math.min(minIndex, maxIndex);
-  const secondExtremum = Math.max(minIndex, maxIndex);
-
-  output[res++] = start;
-
-  if (firstExtremum > start && firstExtremum < last) {
-    output[res++] = firstExtremum;
+  if (!queryResult[QUERY_HAS_GAP]) {
+    return selectFiniteRunPoints(
+      lod,
+      yValues,
+      start,
+      end,
+      selection,
+      nbOfPoints,
+      queryResult[QUERY_MIN_INDEX] as number,
+      queryResult[QUERY_MAX_INDEX] as number
+    );
   }
 
-  if (secondExtremum > start && secondExtremum < last && secondExtremum !== firstExtremum) {
-    output[res++] = secondExtremum;
+  // Select the first point of a range that has no finite point, i.e. that is a gap.
+
+  if (queryResult[QUERY_MIN_INDEX] === -1) {
+    selectionIndices(selection, nbOfPoints, 1)[nbOfPoints] = start;
+
+    return nbOfPoints + 1;
   }
 
-  output[res++] = last;
+  // Our range has gaps, so select the first point of each gap and the points of each run of finite points.
+
+  let res = nbOfPoints;
+  let i = start;
+
+  while (i < end) {
+    const y = yValues[i] as number;
+
+    if (y - y !== 0) {
+      selectionIndices(selection, res, 1)[res++] = i;
+
+      i = skipBlocks(lod, yValues, i + 1, end, false);
+    } else {
+      const runEnd = skipBlocks(lod, yValues, i + 1, end, true);
+
+      query(lod, yValues, i, runEnd);
+
+      res = selectFiniteRunPoints(
+        lod,
+        yValues,
+        i,
+        runEnd,
+        selection,
+        res,
+        queryResult[QUERY_MIN_INDEX] as number,
+        queryResult[QUERY_MAX_INDEX] as number
+      );
+      i = runEnd;
+    }
+  }
 
   return res;
 };
@@ -507,18 +678,10 @@ export const selectPoints = (
   xMin: number,
   xMax: number,
   nbOfColumns: number
-): ISelection | undefined => {
+): ISelection => {
   // Select the points, in the given range (see visibleRange()), that we need to draw for the given X range split into
-  // the given number of columns (see Note #1 above), or return undefined if our range has a gap (see Note #4).
+  // the given number of columns (see Note #1 and Note #4 above).
   // Note: our level of detail must be up to date (see update()).
-
-  query(lod, yValues, start, end);
-
-  if (queryResult[QUERY_HAS_GAP]) {
-    lod.selection = undefined;
-
-    return undefined;
-  }
 
   // Our points are selected range by range, i.e. iteration k selects the points of [b(k - 1), b(k)), where b(-1) is
   // our start, b(k) is the first point whose X value is not less than boundary(k) (for 0 <= k <= nbOfColumns), and
@@ -531,7 +694,7 @@ export const selectPoints = (
   let rangeStart = start;
   let nbOfPoints = 0;
 
-  // Check whether we can reuse (some of) our previous selection (see Note #5 above), i.e. resume from the range that
+  // Check whether we can reuse (some of) our previous selection (see Note #6 above), i.e. resume from the range that
   // contains the first point that may have changed (or the last point that we previously had).
 
   if (
@@ -606,8 +769,6 @@ export const selectPoints = (
 
   // Select our points from our range start.
 
-  const indices = selection.indices;
-
   selection.firstChanged = nbOfPoints;
 
   for (; iteration <= nbOfColumns + 1; ++iteration) {
@@ -621,7 +782,7 @@ export const selectPoints = (
             iteration === nbOfColumns ? xMax : xMin + iteration * columnWidth
           );
 
-    nbOfPoints = selectRangePoints(lod, yValues, rangeStart, rangeEnd, indices, nbOfPoints);
+    nbOfPoints = selectRangePoints(lod, yValues, rangeStart, rangeEnd, selection, nbOfPoints);
     rangeStart = rangeEnd;
   }
 

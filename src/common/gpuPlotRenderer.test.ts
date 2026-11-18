@@ -616,7 +616,8 @@ describe('level of detail', () => {
 
   const selectedPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
     // Return the points that our level of detail selects for the given values and plotting area, relative to their
-    // first point and as 32-bit floats, i.e. what our renderer should upload.
+    // first point and as 32-bit floats (or as gaps, for points with a non-finite Y value), i.e. what our renderer should
+    // upload.
 
     const nbOfPoints = Math.min(xValues.length, yValues.length);
     const lod = levelOfDetailUtils.create();
@@ -633,12 +634,16 @@ describe('level of detail', () => {
       area.xMin,
       area.xMax,
       2 * area.width
-    ) as levelOfDetailUtils.ISelection;
+    );
 
-    return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) => [
-      Math.fround((xValues[index] as number) - (xValues[0] as number)),
-      Math.fround((yValues[index] as number) - (yValues[0] as number))
-    ]);
+    return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) =>
+      Number.isFinite(yValues[index] as number)
+        ? [
+            Math.fround((xValues[index] as number) - (xValues[0] as number)),
+            Math.fround((yValues[index] as number) - (yValues[0] as number))
+          ]
+        : [Math.fround(3.0e38), Math.fround(3.0e38)]
+    );
   };
 
   const bufferPoints = (fake: IFakeContext, buffer: IFakeObject | undefined, nbOfValues: number): number[] => {
@@ -768,12 +773,13 @@ describe('level of detail', () => {
     expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS - 1]]);
   });
 
-  it('draws all the visible points of a trace with a gap among them', () => {
+  it('only draws the points that are needed for the line of a trace with gaps among them, which remain gaps', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();
     const [xValues, yValues] = values(NB_OF_POINTS);
 
     yValues[5000] = Number.NaN;
+    yValues.fill(Number.POSITIVE_INFINITY, 7000, 7100);
 
     trace.update(xValues, yValues);
 
@@ -783,8 +789,17 @@ describe('level of detail', () => {
       { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
     ]);
 
-    expect(fake.buffers.length).toBe(1);
-    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS - 1]]);
+    const expectedPoints = selectedPoints(xValues, yValues, LOD_AREA);
+    const nbOfSelectedPoints = expectedPoints.length / 2;
+
+    expect(nbOfSelectedPoints).toBeLessThan(NB_OF_POINTS / 2);
+    // Our gaps are uploaded as such, i.e. our gap at point 5,000 and our gap from point 7,000 to 7,099, which spans two
+    // columns (of 50 points each), hence it is selected twice (once per column).
+
+    expect(expectedPoints.filter((value) => value === Math.fround(3.0e38)).length).toBe(2 * 3);
+    expect(fake.buffers.length).toBe(2);
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+    expect(lineDraws(fake)).toEqual([[0, nbOfSelectedPoints - 1]]);
   });
 
   it('only uploads the part of its selection that changed', () => {
@@ -819,7 +834,7 @@ describe('level of detail', () => {
     expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
 
     // If nothing changed, then only the points of our last column get selected and uploaded again (since our last
-    // point is always assumed to have possibly changed, see Note #5 of levelOfDetailUtils.ts).
+    // point is always assumed to have possibly changed, see Note #6 of levelOfDetailUtils.ts).
 
     fake.calls.length = 0;
 

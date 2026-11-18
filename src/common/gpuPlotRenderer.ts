@@ -678,7 +678,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // Note: we upload every selection that we make (see drawnPoints()), so if our selection directly follows the one
       //       that we last uploaded, then the part of it that changed since we last uploaded it is the part that
       //       changed since its previous selection. Otherwise (e.g., if our level of detail is shared and was used to
-      //       make a selection in between), all of it may have changed (see Note #6 of levelOfDetailUtils.ts).
+      //       make a selection in between), all of it may have changed (see Note #7 of levelOfDetailUtils.ts).
 
       let from = selection.number === uploadedSelectionNumber + 1 ? selection.firstChanged : 0;
 
@@ -706,8 +706,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         from = 0;
       }
 
-      // Convert and upload our (changed) selected points, which are all finite (since our X values are sorted and
-      // there is no gap).
+      // Convert and upload our (changed) selected points, which X values are all finite (since they are sorted), but
+      // which Y values may not be (i.e. our selection may include gaps, see Note #4 of levelOfDetailUtils.ts), in which
+      // case they get uploaded as gaps (see Note #6 above).
 
       const nbOfValues = 2 * (selection.nbOfPoints - from);
 
@@ -723,9 +724,15 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
         for (let i = from, j = 0; i < selection.nbOfPoints; ++i, j += 2) {
           const index = indices[i] as number;
+          const y = ys[index] as number;
 
-          values[j] = (xs[index] as number) - xOrigin;
-          values[j + 1] = (ys[index] as number) - yOrigin;
+          if (y - y === 0) {
+            values[j] = (xs[index] as number) - xOrigin;
+            values[j + 1] = y - yOrigin;
+          } else {
+            values[j] = GAP_VALUE;
+            values[j + 1] = GAP_VALUE;
+          }
         }
 
         context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
@@ -768,8 +775,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       res.lineStart = res.start;
       res.lineEnd = res.end;
 
-      // Only draw the points that are needed for our line to look the same, if we have many visible points (and no gap
-      // among them).
+      // Only draw the points that are needed for our line to look the same, if we have many visible points.
 
       if (lineWidth <= 0 || res.end - res.start <= minNbOfPoints) {
         return res;
@@ -785,10 +791,6 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         area.xMax,
         nbOfColumns
       );
-
-      if (!selection) {
-        return res;
-      }
 
       res.lineBuffer = uploadSelection(context, selection, xValues, yValues);
       res.lineStart = 0;

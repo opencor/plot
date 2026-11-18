@@ -4448,7 +4448,7 @@ const linearPathPoints = (
   res.index0 = start;
   res.index1 = end - 1;
 
-  // Only go through the points that linearPath() would draw, if we have many visible points (and no gap among them).
+  // Only go through the points that linearPath() would draw, if we have many visible points.
   // Note: linearPath() rounds the X position of a point to determine its pixel column, so our columns start half a
   //       pixel before the pixel column of the left edge of our plotting area.
 
@@ -4459,10 +4459,6 @@ const linearPathPoints = (
   const xMin = area.xMin + (Math.round(area.left) - 0.5 - area.left) / xFactor;
   const xMax = xMin + nbOfColumns / xFactor;
   const selection = levelOfDetailUtils.selectPoints(trace.lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
-
-  if (!selection) {
-    return res;
-  }
 
   if (canvasSelectionXValues.length < selection.nbOfPoints) {
     canvasSelectionXValues = new Float64Array(selection.indices.length);
