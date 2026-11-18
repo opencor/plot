@@ -1,102 +1,5 @@
 <template>
   <div class="demo">
-    <header class="demo-header">
-      <h1>OpenCOR Plot</h1>
-      <label>
-        Data:
-        <select v-model="kind">
-          <option v-for="(name, value) in DATA_KINDS" :key="value" :value="value">{{ name }}</option>
-        </select>
-      </label>
-      <label>
-        Traces:
-        <select v-model.number="nbOfTraces">
-          <option v-for="value in NBS_OF_TRACES" :key="value" :value="value"
-            :disabled="tooManyPoints(nbOfInstances, value, nbOfPoints)"
-          >
-            {{ formatNumber(value) }}
-          </option>
-        </select>
-      </label>
-      <label>
-        Points per trace:
-        <select v-model.number="nbOfPoints">
-          <option v-for="value in NBS_OF_POINTS" :key="value" :value="value"
-            :disabled="tooManyPoints(nbOfInstances, nbOfTraces, value)"
-          >
-            {{ formatNumber(value) }}
-          </option>
-        </select>
-      </label>
-      <label>
-        Instances:
-        <select v-model.number="nbOfInstances">
-          <option v-for="value in NBS_OF_INSTANCES" :key="value" :value="value"
-            :disabled="tooManyPoints(value, nbOfTraces, nbOfPoints)"
-          >
-            {{ formatNumber(value) }}
-          </option>
-        </select>
-      </label>
-      <label>
-        <input v-model="live" type="checkbox" />
-        Live
-      </label>
-      <label>
-        Points per second:
-        <select v-model.number="nbOfPointsPerSecond" :disabled="!live">
-          <option v-for="value in NBS_OF_POINTS_PER_SECOND" :key="value" :value="value">{{ formatNumber(value) }}</option>
-        </select>
-      </label>
-      <label>
-        X range:
-        <select v-model="xRange" :disabled="!live">
-          <option value="fixed">Fixed</option>
-          <option value="growing">Growing</option>
-        </select>
-      </label>
-      <label>
-        Theme:
-        <select v-model="theme">
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-          <option value="mixed">Mixed</option>
-        </select>
-      </label>
-      <label>
-        Renderer:
-        <select v-model="renderer">
-          <option value="auto">Auto</option>
-          <option value="canvas">Canvas 2D</option>
-          <option value="webgl">WebGL</option>
-        </select>
-      </label>
-      <label>
-        <input v-model="levelOfDetail" type="checkbox" />
-        Level of detail
-      </label>
-      <label>
-        <input v-model="showLegend" type="checkbox" />
-        Legend
-      </label>
-      <label>
-        <input v-model="customContextMenu" type="checkbox" />
-        Custom context menu
-      </label>
-      <button type="button" :disabled="renderer === 'canvas' || webGlContextLost" @click="onLoseWebGlContext">Lose WebGL context</button>
-      <button type="button" :disabled="benchmarking || !datasets.length" @click="runBenchmark">Benchmark</button>
-      <span class="demo-status">
-        <span v-if="dataStatus">{{ dataStatus }}</span>
-        <span v-if="liveStatus">{{ liveStatus }}</span>
-        <span v-if="csvExportStatus">{{ csvExportStatus }}</span>
-        <span v-if="webGlStatus">{{ webGlStatus }}</span>
-        <span v-if="benchmarkStatus">{{ benchmarkStatus }}</span>
-        <span>{{ fps }} FPS</span>
-        <span>Drawn using: {{ activeRenderers }}</span>
-        <span>Drawn points: {{ drawnPoints }}</span>
-      </span>
-    </header>
     <main class="demo-main" :style="gridStyle">
       <div v-for="(data, index) in datasets" :key="index" class="demo-plot">
         <OpenCORPlot :ref="(plot) => setPlotRef(plot, index)"
@@ -111,6 +14,118 @@
         />
       </div>
     </main>
+    <aside class="demo-sidebar">
+      <h1>OpenCOR Plot</h1>
+      <section>
+        <h2>Status</h2>
+        <!--
+        Note: our status has a fixed number of rows, each of which is a single line (with an ellipsis and a tooltip if
+              its value is too long), so that it never makes the rest of our sidebar move.
+        -->
+        <dl class="demo-status">
+          <template v-for="row in statusRows" :key="row.term">
+            <dt>{{ row.term }}</dt>
+            <dd :title="row.value">{{ row.value || '—' }}</dd>
+          </template>
+        </dl>
+      </section>
+      <section>
+        <h2>Data</h2>
+        <label class="demo-field">
+          <span>Kind</span>
+          <select v-model="kind">
+            <option v-for="(name, value) in DATA_KINDS" :key="value" :value="value">{{ name }}</option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>Traces</span>
+          <select v-model.number="nbOfTraces">
+            <option v-for="value in NBS_OF_TRACES" :key="value" :value="value"
+              :disabled="tooManyPoints(nbOfInstances, value, nbOfPoints)"
+            >
+              {{ formatNumber(value) }}
+            </option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>Points per trace</span>
+          <select v-model.number="nbOfPoints">
+            <option v-for="value in NBS_OF_POINTS" :key="value" :value="value"
+              :disabled="tooManyPoints(nbOfInstances, nbOfTraces, value)"
+            >
+              {{ formatNumber(value) }}
+            </option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>Instances</span>
+          <select v-model.number="nbOfInstances">
+            <option v-for="value in NBS_OF_INSTANCES" :key="value" :value="value"
+              :disabled="tooManyPoints(value, nbOfTraces, nbOfPoints)"
+            >
+              {{ formatNumber(value) }}
+            </option>
+          </select>
+        </label>
+      </section>
+      <section>
+        <h2>Live</h2>
+        <label class="demo-check">
+          <input v-model="live" type="checkbox" />
+          Plot live
+        </label>
+        <label class="demo-field">
+          <span>Points per second</span>
+          <select v-model.number="nbOfPointsPerSecond" :disabled="!live">
+            <option v-for="value in NBS_OF_POINTS_PER_SECOND" :key="value" :value="value">{{ formatNumber(value) }}</option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>X range</span>
+          <select v-model="xRange" :disabled="!live">
+            <option value="fixed">Fixed</option>
+            <option value="growing">Growing</option>
+          </select>
+        </label>
+      </section>
+      <section>
+        <h2>Plot</h2>
+        <label class="demo-field">
+          <span>Theme</span>
+          <select v-model="theme">
+            <option value="system">System</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+            <option value="mixed">Mixed</option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>Renderer</span>
+          <select v-model="renderer">
+            <option value="auto">Auto</option>
+            <option value="canvas">Canvas 2D</option>
+            <option value="webgl">WebGL</option>
+          </select>
+        </label>
+        <label class="demo-check">
+          <input v-model="levelOfDetail" type="checkbox" />
+          Level of detail
+        </label>
+        <label class="demo-check">
+          <input v-model="showLegend" type="checkbox" />
+          Legend
+        </label>
+        <label class="demo-check">
+          <input v-model="customContextMenu" type="checkbox" />
+          Custom context menu
+        </label>
+      </section>
+      <section>
+        <h2>Testing</h2>
+        <button type="button" :disabled="benchmarking || !datasets.length" @click="runBenchmark">Benchmark</button>
+        <button type="button" :disabled="renderer === 'canvas' || webGlContextLost" @click="onLoseWebGlContext">Lose WebGL context</button>
+      </section>
+    </aside>
     <!--
     Note: a (very) basic custom context menu, to show how a consumer can use its own context menu (see onContextMenu()).
     -->
@@ -218,7 +233,7 @@ const generateData = async (): Promise<void> => {
 
   datasets.value = [];
   generatedDatasets = [];
-  dataStatus.value = `Generating ${formatNumber(totalNbOfPoints)} points...`;
+  dataStatus.value = 'Generating...';
 
   await nextPaint();
 
@@ -231,7 +246,7 @@ const generateData = async (): Promise<void> => {
   generatedDatasets = Array.from({ length: nbOfInstances.value }, (_value, instance) =>
     plotData(kind.value, nbOfTraces.value, nbOfPoints.value, instance)
   );
-  dataStatus.value = `${formatNumber(totalNbOfPoints)} points (generated in ${Math.round(performance.now() - startTime)} ms)`;
+  dataStatus.value = `${formatNumber(totalNbOfPoints)} points in ${formatNumber(Math.round(performance.now() - startTime))} ms`;
 
   showData();
 };
@@ -392,6 +407,7 @@ const FPS_UPDATE_INTERVAL = 500;
 
 const fps = vue.ref<number>(0);
 const activeRenderers = vue.ref<string>('');
+const plottedPoints = vue.ref<string>('');
 const drawnPoints = vue.ref<string>('');
 let fpsFrameId = 0;
 
@@ -412,10 +428,11 @@ const updateDrawingStatus = (): void => {
   }
 
   if (liveFrameId) {
-    liveStatus.value = `Live: ${formatNumber(liveNbOfPoints)} of ${formatNumber(liveTotalNbOfPoints)} points per trace`;
+    liveStatus.value = `${formatNumber(liveNbOfPoints)} of ${formatNumber(liveTotalNbOfPoints)} per trace`;
   }
 
-  drawnPoints.value = `${formatNumber(nbOfDrawnPoints)} of ${formatNumber(nbOfPoints)}${nbOfPoints ? ` (${percentage(nbOfDrawnPoints / nbOfPoints)})` : ''}`;
+  plottedPoints.value = formatNumber(nbOfPoints);
+  drawnPoints.value = `${formatNumber(nbOfDrawnPoints)}${nbOfPoints ? ` (${percentage(nbOfDrawnPoints / nbOfPoints)})` : ''}`;
 
   activeRenderers.value =
     counts.size === 1
@@ -474,7 +491,8 @@ const BENCHMARK_WHEEL_DELTA = 20; // Biggest wheel delta that our plot accounts 
 const BENCHMARK_ZOOM_STEPS = Math.round(10 * Math.log(BENCHMARK_MAX_ZOOM)); // Number of wheel events to zoom in fully.
 
 const benchmarking = vue.ref<boolean>(false); // Whether we are running our benchmark.
-const benchmarkStatus = vue.ref<string>(''); // Status of our benchmark, i.e. its progress or its results.
+const benchmarkStatus = vue.ref<string>(''); // Status of our benchmark, i.e. its progress or our frame rate.
+const benchmarkRedrawStatus = vue.ref<string>(''); // Redraw time of our instances during our benchmark.
 let benchmarkFrameStartId = 0; // Id of our next onFrameStart() callback.
 let benchmarkFrameEndId = 0; // Id of our next onFrameEnd() callback.
 
@@ -511,7 +529,8 @@ const runBenchmark = (): void => {
   let zoomStep = 0;
 
   benchmarking.value = true;
-  benchmarkStatus.value = 'Benchmarking...';
+  benchmarkStatus.value = 'Running...';
+  benchmarkRedrawStatus.value = '';
 
   const zoom = (): void => {
     // Zoom our instances in or out, and keep track of how long it took.
@@ -550,7 +569,8 @@ const runBenchmark = (): void => {
     const averageRedrawDuration =
       redrawDurations.reduce((sum, value) => sum + value, 0) / Math.max(1, redrawDurations.length);
 
-    benchmarkStatus.value = `Benchmark: ${Math.round((1000 * nbOfFrames) / (time - startTime))} FPS, redraw in ${averageRedrawDuration.toFixed(1)} ms (95th percentile: ${percentile(redrawDurations, 0.95).toFixed(1)} ms)`;
+    benchmarkStatus.value = `${Math.round((1000 * nbOfFrames) / (time - startTime))} FPS`;
+    benchmarkRedrawStatus.value = `${averageRedrawDuration.toFixed(1)} ms (95%: ${percentile(redrawDurations, 0.95).toFixed(1)} ms)`;
   };
 
   const onFrameStart = (time: number): void => {
@@ -603,7 +623,7 @@ const onLoseWebGlContext = (): void => {
   clearTimeout(webGlTimeoutId);
 
   if (!loseWebGlContext()) {
-    webGlStatus.value = 'WebGL is not used';
+    webGlStatus.value = 'Not used';
     webGlTimeoutId = setTimeout(() => {
       webGlStatus.value = '';
     }, WEBGL_STATUS_DURATION);
@@ -612,13 +632,13 @@ const onLoseWebGlContext = (): void => {
   }
 
   webGlContextLost.value = true;
-  webGlStatus.value = `WebGL context lost (restoring it in ${WEBGL_CONTEXT_LOSS_DURATION / 1000} s)`;
+  webGlStatus.value = `Lost (restoring it in ${WEBGL_CONTEXT_LOSS_DURATION / 1000} s)`;
 
   webGlTimeoutId = setTimeout(() => {
     restoreWebGlContext();
 
     webGlContextLost.value = false;
-    webGlStatus.value = 'WebGL context restored';
+    webGlStatus.value = 'Restored';
 
     webGlTimeoutId = setTimeout(() => {
       webGlStatus.value = '';
@@ -632,17 +652,32 @@ const csvExportStatus = vue.ref<string>('');
 
 const onCsvExport = (event: IPlotCsvExportEvent): void => {
   if (event.type === 'started') {
-    csvExportStatus.value = 'Exporting to CSV...';
+    csvExportStatus.value = 'Exporting...';
   } else if (event.type === 'progress') {
-    csvExportStatus.value = `Exporting to CSV... ${event.percent}%`;
+    csvExportStatus.value = `Exporting... ${event.percent}%`;
   } else {
-    csvExportStatus.value = event.success ? 'Exported to CSV.' : 'Failed to export to CSV.';
+    csvExportStatus.value = event.success ? 'Exported' : 'Failed';
 
     setTimeout(() => {
       csvExportStatus.value = '';
     }, 2000);
   }
 };
+
+// Our status, i.e. what we show at the top of our sidebar.
+
+const statusRows = vue.computed(() => [
+  { term: 'Frame rate', value: `${fps.value} FPS` },
+  { term: 'Drawn using', value: activeRenderers.value },
+  { term: 'Points', value: plottedPoints.value },
+  { term: 'Drawn points', value: drawnPoints.value },
+  { term: 'Data', value: dataStatus.value },
+  { term: 'Live', value: liveStatus.value },
+  { term: 'Benchmark', value: benchmarkStatus.value },
+  { term: 'Redraw time', value: benchmarkRedrawStatus.value },
+  { term: 'WebGL context', value: webGlStatus.value },
+  { term: 'CSV export', value: csvExportStatus.value }
+]);
 
 // Custom context menu, which lists our items (including those of submenus) as buttons.
 
@@ -706,52 +741,19 @@ const onWindowPointerDown = (event: PointerEvent): void => {
 </script>
 
 <style scoped>
+  /**
+   * Our plots on the left and our sidebar (i.e. our options and status) on the right, or our sidebar below our plots if
+   * our window is narrow.
+   */
+
   .demo {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
     height: 100%;
-  }
-
-  .demo-header {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem 1.5rem;
-    align-items: center;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--demo-border);
-  }
-
-  .demo-header > * {
-    white-space: nowrap;
-  }
-
-  .demo-header h1 {
-    margin: 0;
-    font-size: 1.25rem;
-  }
-
-  .demo-header label {
-    display: flex;
-    gap: 0.375rem;
-    align-items: center;
-  }
-
-  .demo-header select,
-  .demo-header button {
-    padding: 0.125rem 0.25rem;
-    font: inherit;
-  }
-
-  .demo-status {
-    display: flex;
-    gap: 1.5rem;
-    margin-left: auto;
-    font-variant-numeric: tabular-nums;
   }
 
   .demo-main {
     display: grid;
-    flex-grow: 1;
     gap: 0.5rem;
     min-height: 0;
     padding: 1rem;
@@ -761,6 +763,97 @@ const onWindowPointerDown = (event: PointerEvent): void => {
     min-width: 0;
     min-height: 0;
     border: 1px solid var(--demo-border);
+  }
+
+  .demo-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    overflow-y: auto;
+    padding: 1rem;
+    border-left: 1px solid var(--demo-border);
+    font-size: 0.875rem;
+  }
+
+  @media (width <= 800px) {
+    .demo {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(20rem, 1fr) auto;
+      height: auto;
+      min-height: 100%;
+    }
+
+    .demo-sidebar {
+      border-top: 1px solid var(--demo-border);
+      border-left: none;
+    }
+  }
+
+  .demo-sidebar h1 {
+    margin: 0;
+    font-size: 1.25rem;
+  }
+
+  .demo-sidebar section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .demo-sidebar h2 {
+    margin: 0;
+    padding-bottom: 0.25rem;
+    border-bottom: 1px solid var(--demo-border);
+    font-size: 0.75rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    opacity: 0.7;
+  }
+
+  /**
+   * A field, i.e. a label on the left and its control on the right, and a checkbox with its label.
+   */
+
+  .demo-field {
+    display: grid;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .demo-check {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .demo-sidebar select,
+  .demo-sidebar button {
+    padding: 0.125rem 0.25rem;
+    font: inherit;
+  }
+
+  /**
+   * Our status, i.e. a term on the left and its value on the right.
+   */
+
+  .demo-status {
+    display: grid;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+    gap: 0.375rem 0.5rem;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .demo-status dt {
+    opacity: 0.8;
+  }
+
+  .demo-status dd {
+    overflow: hidden;
+    margin: 0;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .demo-custom-menu {
