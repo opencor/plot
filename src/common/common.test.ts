@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, type Mock, mock, spyOn } from 'bun:test';
 
 import {
+  cancelFrame,
   cssColor,
   downloadFile,
   EMPTY_FLOAT64_ARRAY,
   formatError,
+  requestFrame,
   sanitiseHtml,
   sleep,
   waitForNextPaint
@@ -266,6 +268,121 @@ describe('waitForNextPaint()', () => {
     await promise;
 
     expect(cancelAnimationFrame).toHaveBeenCalledWith(123);
+  });
+});
+
+// requestFrame() and cancelFrame().
+
+describe('requestFrame() and cancelFrame()', () => {
+  const animationFrames = (): FrameRequestCallback[] => {
+    // Mock requestAnimationFrame() and return the callbacks that get passed to it, so that we can run them ourselves.
+
+    const res: FrameRequestCallback[] = [];
+
+    spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback: FrameRequestCallback) =>
+      res.push(callback)
+    );
+
+    return res;
+  };
+
+  it('calls all of its callbacks from the same animation frame', () => {
+    const frames = animationFrames();
+    const calls: [name: string, time: number][] = [];
+
+    requestFrame((time: number) => calls.push(['a', time]));
+    requestFrame((time: number) => calls.push(['b', time]));
+
+    expect(frames.length).toBe(1);
+    expect(calls).toEqual([]);
+
+    frames[0]?.(123);
+
+    expect(calls).toEqual([
+      ['a', 123],
+      ['b', 123]
+    ]);
+  });
+
+  it('runs the microtasks queued by its callbacks once all of them have been called', async () => {
+    const frames = animationFrames();
+    const calls: string[] = [];
+
+    requestFrame(() => {
+      calls.push('a');
+
+      queueMicrotask(() => calls.push('microtask a'));
+    });
+    requestFrame(() => calls.push('b'));
+
+    // Run our animation frame like a browser would, i.e. with a microtask checkpoint once it is done.
+
+    await Promise.resolve().then(() => frames[0]?.(0));
+
+    expect(calls).toEqual(['a', 'b', 'microtask a']);
+  });
+
+  it('calls a callback requested while its callbacks are being called in the next animation frame', () => {
+    const frames = animationFrames();
+    const calls: string[] = [];
+
+    requestFrame(() => {
+      calls.push('a');
+
+      requestFrame(() => calls.push('b'));
+    });
+
+    frames[0]?.(0);
+
+    expect(calls).toEqual(['a']);
+    expect(frames.length).toBe(2);
+
+    frames[1]?.(0);
+
+    expect(calls).toEqual(['a', 'b']);
+  });
+
+  it('does not call a cancelled callback, even if it gets cancelled while its callbacks are being called', () => {
+    const frames = animationFrames();
+    const calls: string[] = [];
+
+    const a = requestFrame(() => calls.push('a'));
+
+    requestFrame(() => {
+      calls.push('b');
+
+      cancelFrame(c);
+    });
+
+    const c = requestFrame(() => calls.push('c'));
+
+    cancelFrame(a);
+
+    frames[0]?.(0);
+
+    expect(calls).toEqual(['b']);
+  });
+
+  it('calls its other callbacks if a callback throws, and reports its error once they have been called', () => {
+    const frames = animationFrames();
+    const microtasks: VoidFunction[] = [];
+    const error = new Error('Some error.');
+    const calls: string[] = [];
+
+    spyOn(globalThis, 'queueMicrotask').mockImplementation((callback: VoidFunction) => {
+      microtasks.push(callback);
+    });
+
+    requestFrame(() => {
+      throw error;
+    });
+    requestFrame(() => calls.push('b'));
+
+    frames[0]?.(0);
+
+    expect(calls).toEqual(['b']);
+    expect(microtasks.length).toBe(1);
+    expect(() => microtasks[0]?.()).toThrow(error);
   });
 });
 

@@ -1988,8 +1988,8 @@ const targetRange = (axisKey: AxisKey): Range | undefined => {
 };
 
 const frameTime = (): number => {
-  // Return the time of the current frame, i.e. the time that gets passed to the requestAnimationFrame() callbacks of
-  // the current frame (e.g., stepRangeAnimation()), or the current time if it is not available.
+  // Return the time of the current frame, i.e. the time that gets passed to the frame callbacks of the current frame
+  // (e.g., stepRangeAnimation(), see common.requestFrame()), or the current time if it is not available.
   // Note: an animation must start at the time of the current frame rather than at the current time. Indeed, if a frame
   //       takes long (e.g., because redrawing our plot is slow) and an animation gets (re)started late in it (e.g.,
   //       when using the mouse wheel, see applyWheelZoom()), then the next frame may start at about the same time as
@@ -2055,7 +2055,7 @@ const animateScales = (final: Partial<Record<AxisKey, Range | null>>, duration: 
     duration
   };
 
-  rangeAnimationRafId ??= requestAnimationFrame(stepRangeAnimation);
+  rangeAnimationRafId ??= common.requestFrame(stepRangeAnimation);
 };
 
 const stepRangeAnimation = (now: number): void => {
@@ -2121,14 +2121,14 @@ const stepRangeAnimation = (now: number): void => {
 
   setScales(animatedRanges);
 
-  rangeAnimationRafId = requestAnimationFrame(stepRangeAnimation);
+  rangeAnimationRafId = common.requestFrame(stepRangeAnimation);
 };
 
 const stopRangeAnimation = (): void => {
   // Stop our animation, if any, leaving our ranges as they currently are.
 
   if (rangeAnimationRafId !== undefined) {
-    cancelAnimationFrame(rangeAnimationRafId);
+    common.cancelFrame(rangeAnimationRafId);
 
     rangeAnimationRafId = undefined;
   }
@@ -2498,7 +2498,7 @@ const onDragStart = (event: PointerEvent, type: DragType): void => {
   // be based on ranges that are not the ones that are shown anymore).
 
   if (wheelRafId !== undefined) {
-    cancelAnimationFrame(wheelRafId);
+    common.cancelFrame(wheelRafId);
 
     wheelRafId = undefined;
 
@@ -2633,7 +2633,7 @@ const onDragMove = (event: PointerEvent): void => {
     currentDrag.dy = position.y - currentDrag.startY;
 
     if (dragRafId === undefined) {
-      dragRafId = requestAnimationFrame(() => {
+      dragRafId = common.requestFrame(() => {
         dragRafId = undefined;
 
         if (drag) {
@@ -2916,7 +2916,7 @@ const startPinch = (currentDrag: IDrag, event: PointerEvent): void => {
   // second finger, using our current ranges (which we may have changed while dragging, e.g., an axis).
 
   if (dragRafId !== undefined) {
-    cancelAnimationFrame(dragRafId);
+    common.cancelFrame(dragRafId);
 
     dragRafId = undefined;
   }
@@ -2955,7 +2955,7 @@ const movePinch = (pinch: IPinch, event: PointerEvent, rect: IPlotRect): void =>
   pointer.y = position.y;
 
   if (dragRafId === undefined) {
-    dragRafId = requestAnimationFrame(() => {
+    dragRafId = common.requestFrame(() => {
       dragRafId = undefined;
 
       if (drag?.pinch) {
@@ -3263,7 +3263,7 @@ const onWheel = (event: WheelEvent, type: DragType): void => {
 
   // Schedule a wheel zoom to be applied on the next animation frame.
 
-  wheelRafId = requestAnimationFrame(() => {
+  wheelRafId = common.requestFrame(() => {
     wheelRafId = undefined;
 
     applyWheelZoom();
@@ -3282,7 +3282,7 @@ const stopDrag = (): void => {
   window.removeEventListener('blur', cancelDrag);
 
   if (dragRafId !== undefined) {
-    cancelAnimationFrame(dragRafId);
+    common.cancelFrame(dragRafId);
 
     dragRafId = undefined;
   }
@@ -4633,8 +4633,7 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 //    300,000 points between such traces, or because they are too short for our level of detail to be used (e.g., 1.5
 //    to 3.5 times for 30 to 100 traces of 10,000 points);
 //  - Safari: like Chrome, except that WebGL is even faster (2 to 20 times) whenever Canvas 2D needs to stroke many
-//    points (e.g., 100 traces of 10,000 points), but much slower than Canvas 2D (about 10 times) when there are many
-//    plots (e.g., 16 of them); and
+//    points (e.g., 100 traces of 10,000 points); and
 //  - Firefox: Canvas 2D takes a very long time to stroke a dense trace that goes up and down (e.g., noisy data), which
 //    nothing on our side can avoid (we tried using different line joins, stroking a trace in chunks, and drawing it
 //    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
@@ -4722,6 +4721,11 @@ const prepareFrame = (u: uPlot): void => {
 
   frameRenderer = 'canvas';
   gpuFrameItems = [];
+
+  // Cancel the copy of what our GPU plot renderer rendered for our previous frame, if it is still pending, since it
+  // would otherwise end up on top of our new frame (see Note #8 of gpuPlotRenderer.ts).
+
+  gpuPlotRenderer.cancelRender(u.ctx);
 
   // Dispose of the GPU traces that we don't need anymore, i.e. those of the traces that we don't have anymore or all of
   // them if our traces are to be drawn using Canvas 2D (in which case they would only use memory, both on the GPU and
@@ -5076,13 +5080,13 @@ const placeHoverTooltip = (): void => {
 };
 
 const queueHoverUpdate = (): void => {
-  // Coalesce multiple hover update requests into a single requestAnimationFrame() callback.
+  // Coalesce multiple hover update requests into a single common.requestFrame() callback.
 
   if (hoverRafId !== undefined) {
     return;
   }
 
-  hoverRafId = requestAnimationFrame(() => {
+  hoverRafId = common.requestFrame(() => {
     hoverRafId = undefined;
 
     updateHover();
@@ -5566,13 +5570,13 @@ vue.onBeforeUnmount(() => {
   // value).
 
   if (wheelRafId !== undefined) {
-    cancelAnimationFrame(wheelRafId);
+    common.cancelFrame(wheelRafId);
 
     wheelRafId = undefined;
   }
 
   if (hoverRafId !== undefined) {
-    cancelAnimationFrame(hoverRafId);
+    common.cancelFrame(hoverRafId);
 
     hoverRafId = undefined;
   }

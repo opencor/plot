@@ -166,6 +166,59 @@ export const waitForNextPaint = async (): Promise<void> => {
   await waitForNextAnimationFrameUnlessHidden();
 };
 
+// Some methods to request (and cancel) a call to a callback before the next repaint, like requestAnimationFrame() (and
+// cancelAnimationFrame()), except that all of our callbacks get called from the same animation frame callback.
+// Note #1: this means that the microtasks that our callbacks queue (e.g., to redraw a plot, which uPlot does in a
+//          microtask) only get run once all of our callbacks have been called, rather than after each of them, so that
+//          the work that gets done in those microtasks can be batched (e.g., our GPU plot renderer only waits for the
+//          GPU once for all of our plots, see Note #8 of gpuPlotRenderer.ts).
+// Note #2: like with requestAnimationFrame(), a callback that gets requested while our callbacks are being called gets
+//          called before the following repaint, a callback that gets cancelled while our callbacks are being called
+//          doesn't get called (if it hasn't been called yet), and an error thrown by a callback doesn't prevent our
+//          other callbacks from being called (it gets reported once they have been called).
+
+let frameCallbacks = new Map<number, FrameRequestCallback>();
+let calledFrameCallbacks: Map<number, FrameRequestCallback> | null = null;
+let lastFrameCallbackId = 0;
+let frameRequested = false;
+
+const callFrameCallbacks = (time: number): void => {
+  calledFrameCallbacks = frameCallbacks;
+  frameCallbacks = new Map();
+  frameRequested = false;
+
+  for (const callback of calledFrameCallbacks.values()) {
+    try {
+      callback(time);
+    } catch (error: unknown) {
+      queueMicrotask(() => {
+        throw error;
+      });
+    }
+  }
+
+  calledFrameCallbacks = null;
+};
+
+export const requestFrame = (callback: FrameRequestCallback): number => {
+  const id = ++lastFrameCallbackId;
+
+  frameCallbacks.set(id, callback);
+
+  if (!frameRequested) {
+    frameRequested = true;
+
+    requestAnimationFrame(callFrameCallbacks);
+  }
+
+  return id;
+};
+
+export const cancelFrame = (id: number): void => {
+  frameCallbacks.delete(id);
+  calledFrameCallbacks?.delete(id);
+};
+
 // A method to resolve a colour if it is a CSS variable (e.g., "var(--theme-grid-color)"), so that it can be used on a
 // canvas. The CSS variable is resolved for the given element, i.e. where it is defined or inherited.
 // Note: this must only be called from a browser since it uses the DOM.

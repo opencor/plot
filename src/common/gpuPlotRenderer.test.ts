@@ -434,7 +434,7 @@ describe('render()', () => {
     return calls(fake, 'uniform4fv').map(([, colors]) => Array.from(colors as Float32Array));
   };
 
-  it('renders the lines and markers of some traces, and copies them to the given canvas', () => {
+  it('renders the lines and markers of some traces, and copies them to the given canvas', async () => {
     const { renderer, fake } = createRenderer();
     const target = createFakeTarget();
     const items = [
@@ -448,7 +448,10 @@ describe('render()', () => {
 
     // Our region is our plotting area extended by half the width of our widest line, i.e. 2 pixels.
 
-    expect(calls(fake, 'viewport')).toEqual([[0, 0, 104, 54]]);
+    expect(calls(fake, 'viewport')).toEqual([
+      [0, 0, 104, 54],
+      [0, 0, 104, 54]
+    ]);
     expect(fake.canvas?.width).toBe(104);
     expect(fake.canvas?.height).toBe(54);
     expect(calls(fake, 'texImage2D')).toEqual([['TEXTURE_2D', 0, 'RGBA8', 104, 54, 0, 'RGBA', 'UNSIGNED_BYTE', null]]);
@@ -484,8 +487,13 @@ describe('render()', () => {
     ]);
     expect(calls(fake, 'drawArrays')).toEqual([['TRIANGLES', 0, 3]]);
     expect(compositedColors(fake)).toEqual([[1, 0, 0, 1, 0, 0, alpha, alpha, 0, 0, 0, 0, 0, 0, 0, 0]]);
+    expect(calls(fake, 'uniform2i')).toEqual([['uOrigin', 0, 0]]);
 
-    // The copy of our region to our target.
+    // The copy of our region to our target, once the current task is done with rendering.
+
+    expect(target.drawImageCalls).toEqual([]);
+
+    await Promise.resolve();
 
     expect(target.drawImageCalls).toEqual([[fake.canvas, 0, 0, 104, 54, 8, 18, 104, 54]]);
   });
@@ -572,12 +580,18 @@ describe('render()', () => {
     expect(target.drawImageCalls).toEqual([]);
   });
 
-  it('only ever grows its canvas and coverage texture', () => {
+  it('only ever grows its canvas and coverage texture', async () => {
     const { renderer, fake } = createRenderer();
     const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
 
     renderer.render(createFakeTarget().context, AREA, items);
+
+    await Promise.resolve();
+
     renderer.render(createFakeTarget().context, { ...AREA, width: 50, height: 100 }, items);
+
+    await Promise.resolve();
+
     renderer.render(createFakeTarget().context, { ...AREA, width: 20, height: 20 }, items);
 
     expect(calls(fake, 'texImage2D').map(([, , , width, height]) => [width, height])).toEqual([
@@ -585,6 +599,114 @@ describe('render()', () => {
       [100, 100]
     ]);
     expect([fake.canvas?.width, fake.canvas?.height]).toEqual([100, 100]);
+  });
+
+  it('renders the plots of a task to their own region of its canvas, and copies them once the task is done', async () => {
+    const { renderer, fake } = createRenderer();
+    const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
+    const target1 = createFakeTarget();
+    const target2 = createFakeTarget();
+    const area2 = { ...AREA, width: 50, height: 100 };
+
+    // Our canvas is too small for both of our regions to start with, so it gets grown (after copying our first
+    // region, since growing our canvas clears it), and our second region gets rendered at the top left of it.
+
+    renderer.render(target1.context, AREA, items);
+
+    expect(target1.drawImageCalls.length).toBe(0);
+
+    renderer.render(target2.context, area2, items);
+
+    expect(target1.drawImageCalls).toEqual([[fake.canvas, 0, 0, 100, 50, 10, 20, 100, 50]]);
+    expect([fake.canvas?.width, fake.canvas?.height]).toEqual([150, 100]);
+
+    await Promise.resolve();
+
+    expect(target2.drawImageCalls).toEqual([[fake.canvas, 0, 0, 50, 100, 10, 20, 50, 100]]);
+
+    // Our canvas is now big enough for both of our regions, which get rendered next to each other (i.e. with our first
+    // region at the top left of our canvas, which in WebGL coordinates is above our second region), and copied once our
+    // task is done.
+
+    fake.calls.length = 0;
+
+    renderer.render(target1.context, AREA, items);
+    renderer.render(target2.context, area2, items);
+
+    expect(calls(fake, 'uniform2i')).toEqual([
+      ['uOrigin', 0, 50],
+      ['uOrigin', 100, 0]
+    ]);
+    expect(target1.drawImageCalls.length).toBe(1);
+    expect(target2.drawImageCalls.length).toBe(1);
+
+    await Promise.resolve();
+
+    expect(target1.drawImageCalls.at(-1)).toEqual([fake.canvas, 0, 0, 100, 50, 10, 20, 100, 50]);
+    expect(target2.drawImageCalls.at(-1)).toEqual([fake.canvas, 100, 0, 50, 100, 10, 20, 50, 100]);
+  });
+
+  it('renders a region on a new shelf if it is not wide enough, and copies its regions if it is full', async () => {
+    const { renderer } = createRenderer();
+    const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
+    const target1 = createFakeTarget();
+    const target2 = createFakeTarget();
+    const target3 = createFakeTarget();
+    const area = { ...AREA, width: 3000, height: 1500 };
+
+    // Grow our canvas so that it can hold two of our regions, one above the other.
+
+    renderer.render(target1.context, area, items);
+    renderer.render(target2.context, area, items);
+
+    await Promise.resolve();
+
+    // Our second region doesn't fit next to our first region, so it goes on a new shelf, while our third region doesn't
+    // fit on a new shelf either, so our first two regions get copied first.
+
+    for (const target of [target1, target2, target3]) {
+      target.drawImageCalls.length = 0;
+    }
+
+    renderer.render(target1.context, area, items);
+    renderer.render(target2.context, area, items);
+
+    expect(target1.drawImageCalls.length).toBe(0);
+
+    renderer.render(target3.context, area, items);
+
+    expect(target1.drawImageCalls.map((call) => call.slice(1, 3))).toEqual([[0, 0]]);
+    expect(target2.drawImageCalls.map((call) => call.slice(1, 3))).toEqual([[0, 1500]]);
+    expect(target3.drawImageCalls.length).toBe(0);
+
+    await Promise.resolve();
+
+    expect(target3.drawImageCalls.map((call) => call.slice(1, 3))).toEqual([[0, 0]]);
+  });
+
+  it('only copies the last region rendered for a canvas, and not one that got cancelled', async () => {
+    const { renderer } = createRenderer();
+    const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
+    const target1 = createFakeTarget();
+    const target2 = createFakeTarget();
+
+    // Grow our canvas so that it can hold three of our regions, next to each other.
+
+    for (let i = 0; i < 3; ++i) {
+      renderer.render(createFakeTarget().context, AREA, items);
+    }
+
+    await Promise.resolve();
+
+    renderer.render(target1.context, AREA, items);
+    renderer.render(target1.context, { ...AREA, left: 30 }, items);
+    renderer.render(target2.context, AREA, items);
+    renderer.cancelRender(target2.context);
+
+    await Promise.resolve();
+
+    expect(target1.drawImageCalls.map((call) => call[5])).toEqual([30]);
+    expect(target2.drawImageCalls).toEqual([]);
   });
 
   it('parses a colour only once', () => {

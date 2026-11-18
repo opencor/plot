@@ -48,6 +48,15 @@ import { isContinuationOf } from './traceValues';
 //          columns per pixel are hardly more accurate (e.g., about 0.6% for staircases), but twice as costly to select
 //          (e.g., while zooming, when our points need to be selected for every frame). Our markers, if any, are never
 //          reduced (since they wouldn't look the same otherwise), i.e. all of our visible markers get drawn.
+// Note #8: copying what we rendered for a plot to its canvas (see Note #1 above) requires the GPU to have finished
+//          rendering it, so copying it straight after rendering it means waiting for the GPU for each plot, which is
+//          costly with many plots (e.g., about 55 ms per frame for 16 plots in Safari, against about 1 ms otherwise).
+//          So, each plot gets rendered to its own region of our canvas (next to the regions of the plots that were
+//          previously rendered, up to MAX_ATLAS_SIZE pixels in each direction), and our regions only get copied to
+//          the canvas of their plot once the current task is done with rendering (i.e. in a microtask), so that we
+//          only wait for the GPU once for all of our plots (e.g., when they all get zoomed in/out at once). A plot
+//          that gets redrawn in the meantime must cancel its pending copy (see cancelRender()), since it would
+//          otherwise end up on top of what gets drawn for it.
 
 const GAP_VALUE = 3.0e38;
 const GAP_THRESHOLD = '1.0e38';
@@ -57,6 +66,7 @@ const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a tr
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
 const LOD_COLUMNS_PER_PIXEL = 2; // Number of columns per pixel for our level of detail (see Note #7 above).
 const COVERAGE_CHANNELS = 4; // Number of channels of our coverage texture, i.e. of traces per batch (see Note #4 above).
+const MAX_ATLAS_SIZE = 4096; // Maximum width and height of our canvas when it holds several regions (see Note #8 above).
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -141,6 +151,7 @@ const COMPOSITE_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
 uniform sampler2D uCoverage;
+uniform ivec2 uOrigin;
 uniform vec4 uColors[4];
 
 out vec4 oColor;
@@ -148,7 +159,7 @@ out vec4 oColor;
 void main() {
   // Composite our traces, in order, using their coverage (one per channel) and (premultiplied) colour.
 
-  vec4 coverage = texelFetch(uCoverage, ivec2(gl_FragCoord.xy), 0);
+  vec4 coverage = texelFetch(uCoverage, ivec2(gl_FragCoord.xy) - uOrigin, 0);
   vec4 color = vec4(0.0);
 
   for (int i = 0; i < 4; ++i) {
@@ -176,6 +187,7 @@ interface ISegmentProgram {
 interface ICompositeProgram {
   program: WebGLProgram;
   coverage: WebGLUniformLocation | null;
+  origin: WebGLUniformLocation | null;
   colors: WebGLUniformLocation | null;
 }
 
@@ -261,6 +273,7 @@ const createResources = (context: WebGL2RenderingContext): IResources => {
     compositeProgram: {
       program: compositeProgram,
       coverage: context.getUniformLocation(compositeProgram, 'uCoverage'),
+      origin: context.getUniformLocation(compositeProgram, 'uOrigin'),
       colors: context.getUniformLocation(compositeProgram, 'uColors')
     },
     vertexArray,
@@ -442,6 +455,19 @@ export interface IGpuPlotRenderer {
     items: IGpuPlotItem[],
     pointCounts?: IGpuPlotPointCounts
   ) => boolean;
+  cancelRender: (target: CanvasRenderingContext2D) => void;
+}
+
+// A copy of a region of our canvas to the canvas of a plot, which is pending (see Note #8 above).
+
+interface IPendingCopy {
+  target: CanvasRenderingContext2D;
+  left: number; // Left of our region, in our canvas.
+  top: number; // Top of our region, in our canvas.
+  width: number;
+  height: number;
+  targetLeft: number; // Left of our region, in the canvas of our plot.
+  targetTop: number; // Top of our region, in the canvas of our plot.
 }
 
 let uploadBuffer = new Float32Array(0);
@@ -455,6 +481,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   let contextLost = false;
   let generation = 0;
   const availabilityListeners = new Set<() => void>();
+  let pendingCopies: IPendingCopy[] = [];
+  let atlasLeft = 0;
+  let atlasTop = 0;
+  let atlasShelfHeight = 0;
 
   const initialise = (): void => {
     // Initialise ourselves, but only once.
@@ -885,6 +915,83 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     return res;
   };
 
+  const flush = (): void => {
+    // Copy our pending regions to the canvas of their plot, and start a new atlas.
+
+    const copies = pendingCopies;
+
+    pendingCopies = [];
+    atlasLeft = 0;
+    atlasTop = 0;
+    atlasShelfHeight = 0;
+
+    for (const copy of copies) {
+      copy.target.save();
+      copy.target.setTransform(1, 0, 0, 1, 0, 0);
+      copy.target.globalAlpha = 1;
+      copy.target.globalCompositeOperation = 'source-over';
+      copy.target.drawImage(
+        canvas as HTMLCanvasElement,
+        copy.left,
+        copy.top,
+        copy.width,
+        copy.height,
+        copy.targetLeft,
+        copy.targetTop,
+        copy.width,
+        copy.height
+      );
+      copy.target.restore();
+    }
+  };
+
+  const cancelRender = (target: CanvasRenderingContext2D): void => {
+    // Cancel the pending copy to the given canvas, if any, e.g., since it is being redrawn (see Note #8 above).
+
+    pendingCopies = pendingCopies.filter((copy: IPendingCopy) => copy.target !== target);
+  };
+
+  const allocateRegion = (
+    sharedCanvas: HTMLCanvasElement,
+    width: number,
+    height: number
+  ): [left: number, top: number] => {
+    // Allocate a region of the given size in our canvas, i.e. next to our previous region, or on a new shelf below our
+    // previous regions, or at the top left of our canvas once our pending copies have been flushed if there is no room
+    // left (see Note #8 above).
+
+    if (atlasLeft > 0 && atlasLeft + width > MAX_ATLAS_SIZE) {
+      atlasLeft = 0;
+      atlasTop += atlasShelfHeight;
+      atlasShelfHeight = 0;
+    }
+
+    if (atlasTop > 0 && atlasTop + height > MAX_ATLAS_SIZE) {
+      flush();
+    }
+
+    // Make sure that our canvas is big enough, flushing our pending copies first since resizing our canvas clears it.
+    // Note: we only ever grow our canvas, so that we don't keep reallocating it when rendering plots of different
+    //       sizes.
+
+    const requiredWidth = atlasLeft + width;
+    const requiredHeight = atlasTop + height;
+
+    if (sharedCanvas.width < requiredWidth || sharedCanvas.height < requiredHeight) {
+      flush();
+
+      sharedCanvas.width = Math.max(sharedCanvas.width, requiredWidth);
+      sharedCanvas.height = Math.max(sharedCanvas.height, requiredHeight);
+    }
+
+    const res: [number, number] = [atlasLeft, atlasTop];
+
+    atlasLeft += width;
+    atlasShelfHeight = Math.max(atlasShelfHeight, height);
+
+    return res;
+  };
+
   const render = (
     target: CanvasRenderingContext2D,
     area: IGpuPlotArea,
@@ -897,6 +1004,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     //          plotting area extended by half their line width, while our markers are clipped to our plotting area.
     // Note #2: the number of points that we drew for a trace is the number of points of its line or of its markers,
     //          whichever is bigger.
+    // Note #3: what we render only gets copied to the given canvas once the current task is done with rendering (see
+    //          Note #8 above).
 
     if (pointCounts) {
       pointCounts.nbOfPoints = 0;
@@ -920,21 +1029,22 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       return true;
     }
 
-    // Make sure that our canvas and coverage texture are big enough.
-    // Note: we only ever grow them, so that we don't keep reallocating them when rendering plots of different sizes.
+    // Allocate our region in our canvas, and determine where it is in WebGL coordinates (i.e. with the origin at the
+    // bottom left of our canvas).
 
     const sharedCanvas = canvas;
+    const [atlasRegionLeft, atlasRegionTop] = allocateRegion(sharedCanvas, regionWidth, regionHeight);
+    const originX = atlasRegionLeft;
+    const originY = sharedCanvas.height - atlasRegionTop - regionHeight;
 
-    if (sharedCanvas.width < regionWidth || sharedCanvas.height < regionHeight) {
-      sharedCanvas.width = Math.max(sharedCanvas.width, regionWidth);
-      sharedCanvas.height = Math.max(sharedCanvas.height, regionHeight);
-    }
+    // Make sure that our coverage texture is big enough for our region.
+    // Note: we only ever grow it, so that we don't keep reallocating it when rendering plots of different sizes.
 
     const context = gl;
 
-    if (resources.coverageWidth < sharedCanvas.width || resources.coverageHeight < sharedCanvas.height) {
-      resources.coverageWidth = sharedCanvas.width;
-      resources.coverageHeight = sharedCanvas.height;
+    if (resources.coverageWidth < regionWidth || resources.coverageHeight < regionHeight) {
+      resources.coverageWidth = Math.max(resources.coverageWidth, regionWidth);
+      resources.coverageHeight = Math.max(resources.coverageHeight, regionHeight);
 
       context.bindTexture(context.TEXTURE_2D, resources.coverageTexture);
       context.texImage2D(
@@ -987,9 +1097,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
     const { segmentProgram, compositeProgram, vertexArray } = resources;
 
-    context.viewport(0, 0, regionWidth, regionHeight);
     context.enable(context.SCISSOR_TEST);
-    context.scissor(0, 0, regionWidth, regionHeight);
+    context.scissor(originX, originY, regionWidth, regionHeight);
     context.bindFramebuffer(context.FRAMEBUFFER, null);
     context.clearColor(0, 0, 0, 0);
     context.clear(context.COLOR_BUFFER_BIT);
@@ -1021,6 +1130,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // Render the coverage of our traces and of their markers, if any, each to its own channel.
 
       context.bindFramebuffer(context.FRAMEBUFFER, resources.coverageFramebuffer);
+      context.viewport(0, 0, regionWidth, regionHeight);
       context.scissor(0, 0, regionWidth, regionHeight);
       context.colorMask(true, true, true, true);
       context.clear(context.COLOR_BUFFER_BIT);
@@ -1118,7 +1228,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // Composite our traces using their colour and opacity.
 
       context.bindFramebuffer(context.FRAMEBUFFER, null);
-      context.scissor(0, 0, regionWidth, regionHeight);
+      context.viewport(originX, originY, regionWidth, regionHeight);
+      context.scissor(originX, originY, regionWidth, regionHeight);
       context.blendEquation(context.FUNC_ADD);
       context.blendFunc(context.ONE, context.ONE_MINUS_SRC_ALPHA);
 
@@ -1126,6 +1237,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       context.activeTexture(context.TEXTURE0);
       context.bindTexture(context.TEXTURE_2D, resources.coverageTexture);
       context.uniform1i(compositeProgram.coverage, 0);
+      context.uniform2i(compositeProgram.origin, originX, originY);
       context.uniform4fv(compositeProgram.colors, colors);
       context.drawArrays(context.TRIANGLES, 0, 3);
       context.bindTexture(context.TEXTURE_2D, null);
@@ -1135,30 +1247,29 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     context.disable(context.BLEND);
     context.disable(context.SCISSOR_TEST);
 
-    // Copy our region to the given canvas.
-    // Note: we do this straight away, i.e. before our drawing buffer gets cleared (since we don't preserve it).
+    // Copy our region to the given canvas, once the current task is done with rendering (see Note #8 above).
+    // Note: our copy replaces any pending copy to the given canvas, since the given canvas has been redrawn since.
 
-    target.save();
-    target.setTransform(1, 0, 0, 1, 0, 0);
-    target.globalAlpha = 1;
-    target.globalCompositeOperation = 'source-over';
-    target.drawImage(
-      sharedCanvas,
-      0,
-      sharedCanvas.height - regionHeight,
-      regionWidth,
-      regionHeight,
-      regionLeft,
-      regionTop,
-      regionWidth,
-      regionHeight
-    );
-    target.restore();
+    cancelRender(target);
+
+    if (!pendingCopies.length) {
+      queueMicrotask(flush);
+    }
+
+    pendingCopies.push({
+      target,
+      left: atlasRegionLeft,
+      top: atlasRegionTop,
+      width: regionWidth,
+      height: regionHeight,
+      targetLeft: regionLeft,
+      targetTop: regionTop
+    });
 
     return !context.isContextLost();
   };
 
-  return { isAvailable, onAvailabilityChange, createTrace, render };
+  return { isAvailable, onAvailabilityChange, createTrace, render, cancelRender };
 };
 
 export const gpuPlotRenderer = createGpuPlotRenderer();
