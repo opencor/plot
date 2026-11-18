@@ -244,7 +244,7 @@ export interface IPlotPointCounts {
 // memoryUsage(). This is mainly meant for testing and benchmarking.
 
 export interface IPlotMemoryUsage {
-  levelOfDetail: number; // Our levels of detail (for both of our renderers) and our Canvas 2D selection.
+  levelOfDetail: number; // Our levels of detail (shared by both of our renderers) and our Canvas 2D selection.
   logValues: number; // The decimal logarithm of our values along our logarithmic axes (see plotValues()).
   gpu: number; // The buffers of our traces on the GPU (see gpuPlotRenderer.ts).
 }
@@ -444,9 +444,9 @@ const memoryUsage = (): IPlotMemoryUsage => {
     gpu: 0
   };
 
-  for (const canvasTrace of canvasTraces) {
-    if (canvasTrace) {
-      res.levelOfDetail += levelOfDetailUtils.memoryUsage(canvasTrace.lod);
+  for (const lod of traceLods) {
+    if (lod) {
+      res.levelOfDetail += levelOfDetailUtils.memoryUsage(lod);
     }
   }
 
@@ -4358,6 +4358,10 @@ const linearPath = (
 // Note #2: our columns are our pixel columns (i.e. those of linearPath()), so our selected points include all the
 //          points that linearPath() would draw, i.e. our trace looks exactly the same.
 // Note #3: like our GPU plot renderer, we keep our level of detail up to date incrementally (see traceValues.ts).
+// Note #4: the level of detail of a trace is shared with our GPU plot renderer (see gpuFrameItemsOf()), so that it
+//          doesn't need its own (and therefore twice as much memory). Each of them invalidates it from the first point
+//          that may have changed since it last used it, which is safe since invalidating it from an earlier point than
+//          needed only means that a few more points get processed again.
 
 interface ICanvasTrace {
   xValues: Float64Array | undefined; // X values for which our level of detail was last updated.
@@ -4373,7 +4377,16 @@ interface ILinearPathPoints {
   index1: number; // Index of the last point (included) to give to linearPath().
 }
 
+let traceLods: levelOfDetailUtils.ILevelOfDetail[] = [];
 let canvasTraces: ICanvasTrace[] = [];
+
+const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
+  // Return the level of detail of the given trace, creating it if needed (see Note #4 above).
+
+  traceLods[traceIndex] ??= levelOfDetailUtils.create();
+
+  return traceLods[traceIndex];
+};
 let canvasSelectionXValues = new Float64Array(0);
 let canvasSelectionYValues = new Float64Array(0);
 
@@ -4404,7 +4417,7 @@ const linearPathPoints = (
     xValues: undefined,
     yValues: undefined,
     count: 0,
-    lod: levelOfDetailUtils.create()
+    lod: traceLod(seriesIndex - 1)
   };
 
   const trace = canvasTraces[seriesIndex - 1] as ICanvasTrace;
@@ -4579,7 +4592,7 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
       continue;
     }
 
-    gpuTraces[seriesIndex - 1] ??= gpuPlotRenderer.createTrace();
+    gpuTraces[seriesIndex - 1] ??= gpuPlotRenderer.createTrace(traceLod(seriesIndex - 1));
 
     const gpuTrace = gpuTraces[seriesIndex - 1] as IGpuPlotTrace;
 
@@ -4617,6 +4630,7 @@ const prepareFrame = (u: uPlot): void => {
   disposeGpuTraces(props.renderer === 'canvas' ? 0 : u.series.length - 1);
 
   canvasTraces = canvasTraces.slice(0, u.series.length - 1);
+  traceLods = traceLods.slice(0, u.series.length - 1);
 
   if (props.renderer !== 'canvas') {
     if (gpuPlotRenderer.isAvailable()) {

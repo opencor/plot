@@ -24,6 +24,9 @@
 //          running, with a fixed X range), then we only select the points of the columns from the one that contains
 //          the first point that may have changed, i.e. drawing a few more points costs O(number of new points) rather
 //          than O(number of columns).
+// Note #6: a level of detail may be shared (e.g., by the two renderers of a plot), so each selection has a number, so
+//          that a consumer can tell whether a selection directly follows the one it last used (in which case only its
+//          points from firstChanged onwards may differ from it) or not (in which case all of them may differ).
 
 const BLOCK_SIZE = 16;
 
@@ -45,6 +48,7 @@ export interface ISelection {
   start: number; // Index of the first point (included) of the range of points from which our points were selected.
   end: number; // Index of the last point (excluded) of the range of points from which our points were selected.
   validCount: number; // Number of leading points that haven't changed since our points were selected.
+  number: number; // Number of our selection, i.e. of the selections made by our level of detail (see Note #6 above).
 }
 
 export interface ILevelOfDetail {
@@ -52,10 +56,11 @@ export interface ILevelOfDetail {
   sortedLength: number; // Number of leading points whose X values are finite and sorted in increasing order.
   levels: ILevel[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
   selection: ISelection | undefined; // Our last selection of points (see selectPoints()).
+  nbOfSelections: number; // Number of selections that we have made (see Note #6 above).
 }
 
 export const create = (): ILevelOfDetail => {
-  return { count: 0, sortedLength: 0, levels: [], selection: undefined };
+  return { count: 0, sortedLength: 0, levels: [], selection: undefined, nbOfSelections: 0 };
 };
 
 export const memoryUsage = (lod: ILevelOfDetail): number => {
@@ -590,7 +595,8 @@ export const selectPoints = (
       nbOfColumns,
       start,
       end,
-      validCount: 0
+      validCount: 0,
+      number: 0
     };
 
     iteration = 0;
@@ -626,6 +632,7 @@ export const selectPoints = (
   selection.start = start;
   selection.end = end;
   selection.validCount = Number.POSITIVE_INFINITY;
+  selection.number = ++lod.nbOfSelections;
 
   lod.selection = selection;
 

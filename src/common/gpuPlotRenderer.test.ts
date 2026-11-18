@@ -886,6 +886,45 @@ describe('level of detail', () => {
     expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[0]], [fake.buffers[2]]]);
   });
 
+  it('uses the given level of detail, if any, and uploads its selection in full if another one was made in between', () => {
+    const { renderer, fake } = createRenderer();
+    const lod = levelOfDetailUtils.create();
+    const trace = renderer.createTrace(lod);
+    const [xValues, yValues] = values(NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    // Our trace uses the given level of detail, which it doesn't count as its own memory.
+
+    expect(lod.count).toBe(NB_OF_POINTS);
+    expect(lod.nbOfSelections).toBe(1);
+    expect(trace.memoryUsage().cpu).toBe(0);
+
+    // Another selection gets made in between (e.g., by the Canvas 2D renderer of a plot), so our next selection gets
+    // uploaded in full, even though only its last column was selected again.
+
+    levelOfDetailUtils.selectPoints(lod, xValues, yValues, 0, NB_OF_POINTS, LOD_AREA.xMin, LOD_AREA.xMax, 200);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    const expectedPoints = selectedPoints(xValues, yValues, LOD_AREA);
+
+    expect(lod.selection?.firstChanged).toBeGreaterThan(0);
+    expect(calls(fake, 'bufferSubData').map(([, offset, , , length]) => [offset, length])).toEqual([
+      [0, expectedPoints.length]
+    ]);
+
+    // Once disposed of, our trace stops using the given level of detail.
+
+    trace.dispose();
+
+    expect(lod.count).toBe(NB_OF_POINTS);
+  });
+
   it('reports how much memory it uses, in memory and on the GPU', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();

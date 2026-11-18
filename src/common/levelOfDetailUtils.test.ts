@@ -142,7 +142,7 @@ const randomPoints = (random: () => number, nbOfPoints: number): [Float64Array, 
 
 describe('create()', () => {
   it('creates an empty level of detail', () => {
-    expect(create()).toEqual({ count: 0, sortedLength: 0, levels: [], selection: undefined });
+    expect(create()).toEqual({ count: 0, sortedLength: 0, levels: [], selection: undefined, nbOfSelections: 0 });
   });
 });
 
@@ -308,6 +308,24 @@ describe('visibleRange()', () => {
 // selectPoints().
 
 describe('selectPoints()', () => {
+  it('numbers its selections', () => {
+    const nbOfPoints = 256;
+    const xValues = Float64Array.from({ length: nbOfPoints }, (_value, i) => i);
+    const lod = create();
+
+    update(lod, xValues, xValues, nbOfPoints);
+
+    // Our selections are numbered whether or not they reuse (some of) the previous one.
+
+    const selection = selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 10) as ISelection;
+
+    expect(selection.number).toBe(1);
+
+    expect(selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 10)?.number).toBe(2);
+    expect(selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 20)?.number).toBe(3);
+    expect(lod.nbOfSelections).toBe(3);
+  });
+
   it('selects the points needed to draw some points', () => {
     // Check our selection for different numbers of points (so that we have up to five levels of blocks), X ranges, and
     // numbers of columns.

@@ -320,7 +320,7 @@ const convertPoints = (
 // A trace, i.e. its data on the GPU.
 
 export interface IGpuPlotTraceMemoryUsage {
-  cpu: number; // Number of bytes used in memory, i.e. by our level of detail.
+  cpu: number; // Number of bytes used in memory, i.e. by our level of detail (unless it is shared).
   gpu: number; // Number of bytes used on the GPU, i.e. by our buffer and our selection buffer.
 }
 
@@ -417,7 +417,7 @@ export interface IGpuPlotPointCounts {
 export interface IGpuPlotRenderer {
   isAvailable: () => boolean;
   onAvailabilityChange: (listener: () => void) => () => void;
-  createTrace: () => IGpuPlotTrace;
+  createTrace: (lod?: levelOfDetailUtils.ILevelOfDetail) => IGpuPlotTrace;
   render: (
     target: CanvasRenderingContext2D,
     area: IGpuPlotArea,
@@ -535,7 +535,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     };
   };
 
-  const createTrace = (): IGpuPlotTrace => {
+  const createTrace = (sharedLod?: levelOfDetailUtils.ILevelOfDetail): IGpuPlotTrace => {
+    // Create a trace, which uses the given level of detail, if any (e.g., so that it can be shared with the Canvas 2D
+    // renderer of a plot, see linearPathPoints() in PlotWidget.vue), or its own level of detail otherwise.
+
     let buffer: WebGLBuffer | null = null;
     let bufferGeneration = -1;
     let capacity = 0;
@@ -546,8 +549,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     let originY = 0;
     let maxAbsX = 0;
     let maxAbsY = 0;
-    let lod = levelOfDetailUtils.create();
+    let lod = sharedLod ?? levelOfDetailUtils.create();
+    let ownsLod = !sharedLod;
     let selectionBuffer: WebGLBuffer | null = null;
+    let uploadedSelectionNumber = -1;
     let selectionBufferGeneration = -1;
     let selectionBufferCapacity = 0;
 
@@ -656,8 +661,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       xValues = undefined;
       yValues = undefined;
       lod = levelOfDetailUtils.create();
+      ownsLod = true;
       selectionBuffer = null;
       selectionBufferCapacity = 0;
+      uploadedSelectionNumber = -1;
     };
 
     const uploadSelection = (
@@ -668,10 +675,14 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     ): WebGLBuffer | null => {
       // Upload the given selection of our points (see Note #7 above), or rather the part of it that changed since we
       // last uploaded it, and return the buffer that contains it.
-      // Note: we upload every selection that we make (see drawnPoints()), so the part of our selection that changed
-      //       since we last uploaded it is the part that changed since our previous selection.
+      // Note: we upload every selection that we make (see drawnPoints()), so if our selection directly follows the one
+      //       that we last uploaded, then the part of it that changed since we last uploaded it is the part that
+      //       changed since its previous selection. Otherwise (e.g., if our level of detail is shared and was used to
+      //       make a selection in between), all of it may have changed (see Note #6 of levelOfDetailUtils.ts).
 
-      let from = selection.firstChanged;
+      let from = selection.number === uploadedSelectionNumber + 1 ? selection.firstChanged : 0;
+
+      uploadedSelectionNumber = selection.number;
 
       // Upload our selection in full if our buffer belongs to a lost context or if it is not big enough.
 
@@ -791,7 +802,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // context (since they are gone).
 
       return {
-        cpu: levelOfDetailUtils.memoryUsage(lod),
+        cpu: ownsLod ? levelOfDetailUtils.memoryUsage(lod) : 0,
         gpu:
           (buffer && bufferGeneration === generation ? capacity * BYTES_PER_POINT : 0) +
           (selectionBuffer && selectionBufferGeneration === generation ? selectionBufferCapacity * BYTES_PER_POINT : 0)
