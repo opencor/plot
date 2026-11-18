@@ -428,6 +428,12 @@ describe('render()', () => {
     return res;
   };
 
+  const compositedColors = (fake: IFakeContext): number[][] => {
+    // Return the colours with which our batches of traces were composited.
+
+    return calls(fake, 'uniform4fv').map(([, colors]) => Array.from(colors as Float32Array));
+  };
+
   it('renders the lines and markers of some traces, and copies them to the given canvas', () => {
     const { renderer, fake } = createRenderer();
     const target = createFakeTarget();
@@ -445,7 +451,7 @@ describe('render()', () => {
     expect(calls(fake, 'viewport')).toEqual([[0, 0, 104, 54]]);
     expect(fake.canvas?.width).toBe(104);
     expect(fake.canvas?.height).toBe(54);
-    expect(calls(fake, 'texImage2D')).toEqual([['TEXTURE_2D', 0, 'R8', 104, 54, 0, 'RED', 'UNSIGNED_BYTE', null]]);
+    expect(calls(fake, 'texImage2D')).toEqual([['TEXTURE_2D', 0, 'RGBA8', 104, 54, 0, 'RGBA', 'UNSIGNED_BYTE', null]]);
 
     // Our lines (i.e. one segment less than points) and markers (i.e. one segment of zero length per point), with our
     // lines being clipped to our plotting area extended by half their width, and our markers to our plotting area.
@@ -465,22 +471,46 @@ describe('render()', () => {
       [2, 2, 100, 50]
     ]);
 
-    // The compositing of our traces, using their (premultiplied) colour and opacity.
+    // The coverage of each of our traces is rendered to its own channel, and our traces are then composited at once,
+    // using their (premultiplied) colour and opacity.
 
-    const alpha = (128 / 255) * 0.5;
+    const alpha = Math.fround((128 / 255) * 0.5);
 
-    expect(calls(fake, 'drawArrays')).toEqual([
-      ['TRIANGLES', 0, 3],
-      ['TRIANGLES', 0, 3]
+    expect(calls(fake, 'colorMask')).toEqual([
+      [true, true, true, true],
+      [true, false, false, false],
+      [false, true, false, false],
+      [true, true, true, true]
     ]);
-    expect(calls(fake, 'uniform4f')).toEqual([
-      ['uColor', 1, 0, 0, 1],
-      ['uColor', 0, 0, alpha, alpha]
-    ]);
+    expect(calls(fake, 'drawArrays')).toEqual([['TRIANGLES', 0, 3]]);
+    expect(compositedColors(fake)).toEqual([[1, 0, 0, 1, 0, 0, alpha, alpha, 0, 0, 0, 0, 0, 0, 0, 0]]);
 
     // The copy of our region to our target.
 
     expect(target.drawImageCalls).toEqual([[fake.canvas, 0, 0, 104, 54, 8, 18, 104, 54]]);
+  });
+
+  it('renders its traces in batches of four', () => {
+    const { renderer, fake } = createRenderer();
+    const items = Array.from({ length: 5 }, () => ({
+      trace: traceWith(renderer, 5),
+      color: '#f00',
+      alpha: 1,
+      lineWidth: 1,
+      markerSize: 0
+    }));
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, AREA, items);
+
+    expect(calls(fake, 'clear').length).toBe(1 + 2);
+    expect(calls(fake, 'drawArraysInstanced').length).toBe(5);
+    expect(calls(fake, 'drawArrays').length).toBe(2);
+    expect(compositedColors(fake)).toEqual([
+      [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1],
+      [1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    ]);
   });
 
   it('skips traces that have no points or that are fully transparent', () => {
@@ -581,7 +611,7 @@ describe('render()', () => {
 
     renderer.render(createFakeTarget().context, AREA, items);
 
-    expect(calls(fake, 'uniform4f')).toEqual([['uColor', 0, 0, 0, 1]]);
+    expect(compositedColors(fake)).toEqual([[0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]]);
   });
 
   it('fails if its context gets lost while rendering', () => {

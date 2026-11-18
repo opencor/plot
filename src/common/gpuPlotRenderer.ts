@@ -21,7 +21,13 @@ import { isContinuationOf } from './traceValues';
 //          is drawn as a segment of zero length (i.e. a disc). The segments and markers of a trace are first rendered
 //          to a coverage texture using a MAX blend, which then gets composited using the colour and opacity of the
 //          trace. This means that a trace is drawn as a single shape (like a stroked path on a 2D canvas), i.e. its
-//          overlapping segments don't make it darker (e.g., when a trace is faded).
+//          overlapping segments don't make it darker (e.g., when a trace is faded). Our coverage texture has
+//          COVERAGE_CHANNELS channels, each of which holds the coverage of a trace, so that our traces get rendered in
+//          batches of COVERAGE_CHANNELS traces, which get composited (in order) at once. Indeed, clearing our coverage
+//          texture and compositing it are done for our whole region, and switching between our coverage texture and
+//          our canvas may require them to be stored and loaded (e.g., in Chrome on macOS, where WebGL is implemented
+//          using Metal), so doing all of this for each trace would be costly with many traces (e.g., about 9 ms per
+//          frame for 100 traces in Chrome).
 // Note #5: we may lose our WebGL context (e.g., if the GPU gets reset), in which case we are not available (so that our
 //          plots can fall back to drawing their traces themselves) until our context gets restored. Our listeners (i.e.
 //          our plots) get notified in both cases, so that they can redraw themselves straight away (which, once our
@@ -50,6 +56,7 @@ const MAX_PRECISION_ERROR = 0.25; // Maximum position error that we accept (in c
 const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a trace.
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
 const LOD_COLUMNS_PER_PIXEL = 2; // Number of columns per pixel for our level of detail (see Note #7 above).
+const COVERAGE_CHANNELS = 4; // Number of channels of our coverage texture, i.e. of traces per batch (see Note #4 above).
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -134,12 +141,23 @@ const COMPOSITE_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
 uniform sampler2D uCoverage;
-uniform vec4 uColor;
+uniform vec4 uColors[4];
 
 out vec4 oColor;
 
 void main() {
-  oColor = uColor * texelFetch(uCoverage, ivec2(gl_FragCoord.xy), 0).r;
+  // Composite our traces, in order, using their coverage (one per channel) and (premultiplied) colour.
+
+  vec4 coverage = texelFetch(uCoverage, ivec2(gl_FragCoord.xy), 0);
+  vec4 color = vec4(0.0);
+
+  for (int i = 0; i < 4; ++i) {
+    vec4 traceColor = uColors[i] * coverage[i];
+
+    color = traceColor + color * (1.0 - traceColor.a);
+  }
+
+  oColor = color;
 }
 `;
 
@@ -158,7 +176,7 @@ interface ISegmentProgram {
 interface ICompositeProgram {
   program: WebGLProgram;
   coverage: WebGLUniformLocation | null;
-  color: WebGLUniformLocation | null;
+  colors: WebGLUniformLocation | null;
 }
 
 interface IResources {
@@ -243,7 +261,7 @@ const createResources = (context: WebGL2RenderingContext): IResources => {
     compositeProgram: {
       program: compositeProgram,
       coverage: context.getUniformLocation(compositeProgram, 'uCoverage'),
-      color: context.getUniformLocation(compositeProgram, 'uColor')
+      colors: context.getUniformLocation(compositeProgram, 'uColors')
     },
     vertexArray,
     coverageTexture,
@@ -922,11 +940,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       context.texImage2D(
         context.TEXTURE_2D,
         0,
-        context.R8,
+        context.RGBA8,
         resources.coverageWidth,
         resources.coverageHeight,
         0,
-        context.RED,
+        context.RGBA,
         context.UNSIGNED_BYTE,
         null
       );
@@ -978,25 +996,33 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     context.enable(context.BLEND);
     context.bindVertexArray(vertexArray);
 
-    // Render our items, one by one.
+    // Determine the items that we need to render, i.e. those that have some points and are not fully transparent, as
+    // well as their (premultiplied) colour.
 
-    const [xFactor, yFactor] = axisFactors(area);
+    const renderedItems: [item: IGpuPlotItem, trace: IGpuPlotTraceInternals, buffer: WebGLBuffer, color: number[]][] =
+      [];
 
     for (const item of items) {
       const trace = item.trace as IGpuPlotTraceInternals;
       const buffer = trace.buffer();
-      const count = trace.count();
       const [r, g, b, a] = rgba(item.color);
       const alpha = a * item.alpha;
 
-      if (!buffer || count === 0 || alpha <= 0) {
-        continue;
+      if (buffer && trace.count() > 0 && alpha > 0) {
+        renderedItems.push([item, trace, buffer, [r * alpha, g * alpha, b * alpha, alpha]]);
       }
+    }
 
-      // Render the coverage of our trace and of its markers, if any.
+    // Render our items, in batches of COVERAGE_CHANNELS items (see Note #4 above).
+
+    const [xFactor, yFactor] = axisFactors(area);
+
+    for (let batchStart = 0; batchStart < renderedItems.length; batchStart += COVERAGE_CHANNELS) {
+      // Render the coverage of our traces and of their markers, if any, each to its own channel.
 
       context.bindFramebuffer(context.FRAMEBUFFER, resources.coverageFramebuffer);
       context.scissor(0, 0, regionWidth, regionHeight);
+      context.colorMask(true, true, true, true);
       context.clear(context.COLOR_BUFFER_BIT);
       context.blendEquation(context.MAX);
       context.blendFunc(context.ONE, context.ONE);
@@ -1004,75 +1030,92 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       context.useProgram(segmentProgram.program);
       context.uniform2f(segmentProgram.viewport, regionWidth, regionHeight);
       context.uniform2f(segmentProgram.scale, xFactor, yFactor);
-      context.uniform2f(
-        segmentProgram.offset,
-        area.left - regionLeft + (trace.originX() - area.xMin) * xFactor,
-        regionHeight - (areaBottom - regionTop) + (trace.originY() - area.yMin) * yFactor
-      );
 
       context.enableVertexAttribArray(segmentProgram.point0);
       context.enableVertexAttribArray(segmentProgram.point1);
       context.vertexAttribDivisor(segmentProgram.point0, 1);
       context.vertexAttribDivisor(segmentProgram.point1, 1);
 
-      const traceScissor = scissor(
-        area.left - 0.5 * item.lineWidth,
-        area.top - 0.5 * item.lineWidth,
-        areaRight + 0.5 * item.lineWidth,
-        areaBottom + 0.5 * item.lineWidth
-      );
+      const colors = new Float32Array(4 * COVERAGE_CHANNELS);
 
-      const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(
-        context,
-        area,
-        item.lineWidth,
-        item.levelOfDetail ?? true
-      );
-      let nbOfDrawnPoints = 0;
+      for (let channel = 0; channel < COVERAGE_CHANNELS; ++channel) {
+        const renderedItem = renderedItems[batchStart + channel];
 
-      if (lineBuffer && lineEnd - lineStart > 1 && item.lineWidth > 0) {
-        nbOfDrawnPoints = lineEnd - lineStart;
+        if (!renderedItem) {
+          break;
+        }
 
-        const offset = lineStart * BYTES_PER_POINT;
+        const [item, trace, buffer, color] = renderedItem;
 
-        context.bindBuffer(context.ARRAY_BUFFER, lineBuffer);
-        context.scissor(...traceScissor);
-        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
-        context.vertexAttribPointer(
-          segmentProgram.point1,
-          2,
-          context.FLOAT,
-          false,
-          BYTES_PER_POINT,
-          offset + BYTES_PER_POINT
+        context.colorMask(channel === 0, channel === 1, channel === 2, channel === 3);
+        context.uniform2f(
+          segmentProgram.offset,
+          area.left - regionLeft + (trace.originX() - area.xMin) * xFactor,
+          regionHeight - (areaBottom - regionTop) + (trace.originY() - area.yMin) * yFactor
         );
-        context.uniform1f(segmentProgram.radius, 0.5 * item.lineWidth);
-        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, lineEnd - lineStart - 1);
+
+        const traceScissor = scissor(
+          area.left - 0.5 * item.lineWidth,
+          area.top - 0.5 * item.lineWidth,
+          areaRight + 0.5 * item.lineWidth,
+          areaBottom + 0.5 * item.lineWidth
+        );
+
+        const { start, end, lineBuffer, lineStart, lineEnd } = trace.drawnPoints(
+          context,
+          area,
+          item.lineWidth,
+          item.levelOfDetail ?? true
+        );
+        let nbOfDrawnPoints = 0;
+
+        if (lineBuffer && lineEnd - lineStart > 1 && item.lineWidth > 0) {
+          nbOfDrawnPoints = lineEnd - lineStart;
+
+          const offset = lineStart * BYTES_PER_POINT;
+
+          context.bindBuffer(context.ARRAY_BUFFER, lineBuffer);
+          context.scissor(...traceScissor);
+          context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
+          context.vertexAttribPointer(
+            segmentProgram.point1,
+            2,
+            context.FLOAT,
+            false,
+            BYTES_PER_POINT,
+            offset + BYTES_PER_POINT
+          );
+          context.uniform1f(segmentProgram.radius, 0.5 * item.lineWidth);
+          context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, lineEnd - lineStart - 1);
+        }
+
+        if (item.markerSize > 0 && end > start) {
+          nbOfDrawnPoints = Math.max(nbOfDrawnPoints, end - start);
+
+          const offset = start * BYTES_PER_POINT;
+
+          context.bindBuffer(context.ARRAY_BUFFER, buffer);
+          context.scissor(...markersScissor);
+          context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
+          context.vertexAttribPointer(segmentProgram.point1, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
+          context.uniform1f(segmentProgram.radius, 0.5 * item.markerSize);
+          context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, end - start);
+        }
+
+        colors.set(color, 4 * channel);
+
+        if (pointCounts) {
+          pointCounts.nbOfPoints += trace.count();
+          pointCounts.nbOfDrawnPoints += nbOfDrawnPoints;
+        }
       }
 
-      if (item.markerSize > 0 && end > start) {
-        nbOfDrawnPoints = Math.max(nbOfDrawnPoints, end - start);
-
-        const offset = start * BYTES_PER_POINT;
-
-        context.bindBuffer(context.ARRAY_BUFFER, buffer);
-        context.scissor(...markersScissor);
-        context.vertexAttribPointer(segmentProgram.point0, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
-        context.vertexAttribPointer(segmentProgram.point1, 2, context.FLOAT, false, BYTES_PER_POINT, offset);
-        context.uniform1f(segmentProgram.radius, 0.5 * item.markerSize);
-        context.drawArraysInstanced(context.TRIANGLE_STRIP, 0, 4, end - start);
-      }
-
+      context.colorMask(true, true, true, true);
       context.disableVertexAttribArray(segmentProgram.point0);
       context.disableVertexAttribArray(segmentProgram.point1);
       context.bindBuffer(context.ARRAY_BUFFER, null);
 
-      if (pointCounts) {
-        pointCounts.nbOfPoints += count;
-        pointCounts.nbOfDrawnPoints += nbOfDrawnPoints;
-      }
-
-      // Composite our trace using its colour and opacity.
+      // Composite our traces using their colour and opacity.
 
       context.bindFramebuffer(context.FRAMEBUFFER, null);
       context.scissor(0, 0, regionWidth, regionHeight);
@@ -1083,7 +1126,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       context.activeTexture(context.TEXTURE0);
       context.bindTexture(context.TEXTURE_2D, resources.coverageTexture);
       context.uniform1i(compositeProgram.coverage, 0);
-      context.uniform4f(compositeProgram.color, r * alpha, g * alpha, b * alpha, alpha);
+      context.uniform4fv(compositeProgram.colors, colors);
       context.drawArrays(context.TRIANGLES, 0, 3);
       context.bindTexture(context.TEXTURE_2D, null);
     }

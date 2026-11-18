@@ -4630,12 +4630,11 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 //  - Chrome: Canvas 2D is faster (1.3 to 2.7 times) when it only needs to stroke a few points per pixel column of a
 //    trace, thanks to our level of detail (see linearPathPoints()), but WebGL is much faster (2 to 6 times) when all
 //    the points of a trace need to be stroked because its X values are not sorted (e.g., a phase plot), from about
-//    300,000 points between such traces. However, WebGL has a cost of about 0.1 ms per trace, so both renderers are
-//    about as fast when all the points of many traces need to be stroked because they are too short for our level of
-//    detail to be used (e.g., 30 to 100 traces of 10,000 points);
-//  - Safari: like Chrome, except that WebGL has no such cost per trace, i.e. it is much faster (2 to 20 times) whenever
-//    Canvas 2D needs to stroke many points (e.g., 100 traces of 10,000 points), but it is much slower than Canvas 2D
-//    (about 10 times) when there are many plots (e.g., 16 of them); and
+//    300,000 points between such traces, or because they are too short for our level of detail to be used (e.g., 1.5
+//    to 3.5 times for 30 to 100 traces of 10,000 points);
+//  - Safari: like Chrome, except that WebGL is even faster (2 to 20 times) whenever Canvas 2D needs to stroke many
+//    points (e.g., 100 traces of 10,000 points), but much slower than Canvas 2D (about 10 times) when there are many
+//    plots (e.g., 16 of them); and
 //  - Firefox: Canvas 2D takes a very long time to stroke a dense trace that goes up and down (e.g., noisy data), which
 //    nothing on our side can avoid (we tried using different line joins, stroking a trace in chunks, and drawing it
 //    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
