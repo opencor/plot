@@ -9,8 +9,10 @@
           :levelOfDetail="levelOfDetail"
           :showLegend="showLegend"
           :customContextMenu="customContextMenu"
+          :margins="sharedMargins ? margins : undefined"
           @contextMenu="(event) => onContextMenu(event, index)"
           @csvExport="onCsvExport"
+          @marginsUpdated="(newMargins) => onMarginsUpdated(newMargins, index)"
         />
       </div>
     </main>
@@ -91,6 +93,17 @@
       <section>
         <h2>Plot</h2>
         <label class="demo-field">
+          <span>Layout</span>
+          <select v-model="layout">
+            <option value="grid">Grid</option>
+            <option value="stacked">Stacked</option>
+          </select>
+        </label>
+        <label class="demo-check">
+          <input v-model="sharedMargins" type="checkbox" />
+          Shared margins
+        </label>
+        <label class="demo-field">
           <span>Theme</span>
           <select v-model="theme">
             <option value="system">System</option>
@@ -149,6 +162,7 @@ import OpenCORPlot, {
   type IPlotContextMenuEvent,
   type IPlotCsvExportEvent,
   type IPlotData,
+  type IPlotMargins,
   type PlotActiveRenderer,
   type PlotRenderer,
   type PlotTheme
@@ -174,6 +188,8 @@ const renderer = vue.ref<PlotRenderer>('auto');
 const levelOfDetail = vue.ref<boolean>(true);
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
+const layout = vue.ref<'grid' | 'stacked'>('grid'); // Whether our instances are in a grid or stacked (in one column).
+const sharedMargins = vue.ref<boolean>(true); // Whether our instances share their margins (see onMarginsUpdated()).
 const live = vue.ref<boolean>(false);
 const nbOfPointsPerSecond = vue.ref<number>(1000);
 const xRange = vue.ref<'fixed' | 'growing'>('fixed');
@@ -398,7 +414,10 @@ const setPlotRef = (plot: unknown, index: number): void => {
 };
 
 const gridStyle = vue.computed(() => {
-  const nbOfColumns = Math.ceil(Math.sqrt(datasets.value.length));
+  // Return the style of our grid, i.e. one column if our instances are stacked or, otherwise, as many columns as needed
+  // for our grid to be as square as possible, and as many rows as needed for all of our instances.
+
+  const nbOfColumns = layout.value === 'stacked' ? 1 : Math.ceil(Math.sqrt(datasets.value.length));
   const nbOfRows = Math.ceil(datasets.value.length / Math.max(1, nbOfColumns));
 
   return {
@@ -406,6 +425,33 @@ const gridStyle = vue.computed(() => {
     gridTemplateRows: `repeat(${nbOfRows}, minmax(0, 1fr))`
   };
 });
+
+// Shared margins, i.e. the biggest natural margins of our instances, which we give to all of them (if they are to share
+// their margins), so that their plotting areas are aligned (e.g., when they are stacked).
+// Note: an instance always emits its natural margins (i.e. the margins that it needs), whether or not it is given some
+//       shared margins (see updateMarginsAsync() in PlotWidget.vue).
+
+const naturalMargins: (IPlotMargins | undefined)[] = []; // Natural margins of our instances.
+const margins = vue.shallowRef<IPlotMargins | undefined>(); // Shared margins of our instances.
+
+const onMarginsUpdated = (newMargins: IPlotMargins, index: number): void => {
+  // Keep track of the natural margins of the given instance and update our shared margins, if needed (i.e. only if
+  // they have changed, so that our instances don't get relaid out for nothing).
+
+  naturalMargins[index] = newMargins;
+
+  let left = 0;
+  let right = 0;
+
+  for (const instanceMargins of naturalMargins.slice(0, datasets.value.length)) {
+    left = Math.max(left, instanceMargins?.left ?? 0);
+    right = Math.max(right, instanceMargins?.right ?? 0);
+  }
+
+  if (margins.value?.left !== left || margins.value?.right !== right) {
+    margins.value = { left, right };
+  }
+};
 
 // Our frame rate, the renderer(s) that our instances actually use to draw their traces, and the number of points that
 // they actually draw compared to their number of points (i.e. without level of detail), which we update twice a second

@@ -29,6 +29,7 @@ const GAP_LENGTH = 0.01; // Fraction of our points that each gap spans.
 const LARGE_X_OFFSET = 1e9; // First X value of our large-offset data, e.g. a number of seconds since 1970.
 const LARGE_X_STEP = 1e-3; // Step between two X values of our large-offset data, e.g. one millisecond.
 const LARGE_Y_OFFSET = 1e6; // Value around which the Y values of our large-offset data oscillate.
+const NB_OF_SCALES = 4; // Number of scales of the Y values of our instances, i.e. 1, 10, 100, and 1,000.
 
 const random = (seed: number): (() => number) => {
   // Return a seeded pseudo-random number generator (mulberry32), so that our data is the same every time.
@@ -81,8 +82,9 @@ const xValues = (kind: DataKind, nbOfPoints: number): Float64Array => {
   return res;
 };
 
-const yValues = (kind: DataKind, nbOfPoints: number, phase: number, seed: number): Float64Array => {
-  // Return the Y values of our (sorted) data, i.e. NB_OF_PERIODS periods of a curve, whatever our number of points.
+const yValues = (kind: DataKind, nbOfPoints: number, phase: number, seed: number, scale: number): Float64Array => {
+  // Return the Y values of our (sorted) data, i.e. NB_OF_PERIODS periods of a curve (scaled by the given scale),
+  // whatever our number of points.
 
   const res = new Float64Array(nbOfPoints);
   const angleStep = (2 * Math.PI * NB_OF_PERIODS) / Math.max(1, nbOfPoints - 1);
@@ -92,13 +94,13 @@ const yValues = (kind: DataKind, nbOfPoints: number, phase: number, seed: number
     const value = Math.sin(i * angleStep + phase);
 
     if (kind === 'noisy') {
-      res[i] = value + 0.3 * (nextRandom() - 0.5);
+      res[i] = scale * (value + 0.3 * (nextRandom() - 0.5));
     } else if (kind === 'steps') {
-      res[i] = Math.round(3 * value) / 3;
+      res[i] = (scale * Math.round(3 * value)) / 3;
     } else if (kind === 'largeOffsets') {
-      res[i] = LARGE_Y_OFFSET + value;
+      res[i] = LARGE_Y_OFFSET + scale * value;
     } else {
-      res[i] = value;
+      res[i] = scale * value;
     }
   }
 
@@ -116,8 +118,9 @@ const yValues = (kind: DataKind, nbOfPoints: number, phase: number, seed: number
   return res;
 };
 
-const lissajousValues = (nbOfPoints: number, phase: number): [Float64Array, Float64Array] => {
-  // Return the X and Y values of a Lissajous curve, i.e. a curve which X values are not sorted.
+const lissajousValues = (nbOfPoints: number, phase: number, scale: number): [Float64Array, Float64Array] => {
+  // Return the X and Y values of a Lissajous curve (with its Y values scaled by the given scale), i.e. a curve which X
+  // values are not sorted.
 
   const x = new Float64Array(nbOfPoints);
   const y = new Float64Array(nbOfPoints);
@@ -125,7 +128,7 @@ const lissajousValues = (nbOfPoints: number, phase: number): [Float64Array, Floa
 
   for (let i = 0; i < nbOfPoints; ++i) {
     x[i] = Math.sin(3 * i * angleStep + phase);
-    y[i] = Math.sin(4 * i * angleStep);
+    y[i] = scale * Math.sin(4 * i * angleStep);
   }
 
   return [x, y];
@@ -142,17 +145,20 @@ const AXIS_TITLES: Record<DataKind, [x: string, y: string]> = {
 
 export const plotData = (kind: DataKind, nbOfTraces: number, nbOfPoints: number, instance: number): IPlotData => {
   // Return the data of the given instance of our plot, which is different for each instance (since its curves have a
-  // different phase and its noise a different seed).
+  // different phase and its noise a different seed). Also, the Y values of our instances have different scales (i.e.
+  // 1, 10, 100, and 1,000, over and over), so that their Y tick labels have different widths and therefore their plots
+  // have different natural margins (see our shared margins in App.vue).
   // Note: our traces share their X values, if possible, to save memory.
 
   const x = kind === 'unsorted' ? undefined : xValues(kind, nbOfPoints);
+  const scale = 10 ** (instance % NB_OF_SCALES);
   const traces: IPlotTrace[] = [];
 
   for (let i = 0; i < nbOfTraces; ++i) {
     const phase = (2 * Math.PI * i) / nbOfTraces + 0.37 * instance;
     const [traceX, traceY] = x
-      ? [x, yValues(kind, nbOfPoints, phase, 1000 * instance + i)]
-      : lissajousValues(nbOfPoints, phase);
+      ? [x, yValues(kind, nbOfPoints, phase, 1000 * instance + i, scale)]
+      : lissajousValues(nbOfPoints, phase, scale);
     const name = `Trace #${i + 1}`;
 
     traces.push({ name, xValue: 'x', x: traceX, yValue: name, y: traceY, color: traceColor(i) });
