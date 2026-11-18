@@ -263,6 +263,7 @@ const generateData = async (): Promise<void> => {
   datasets.value = [];
   generatedDatasets = [];
   dataStatus.value = 'Generating...';
+  firstDrawStatus.value = '';
 
   await nextPaint();
 
@@ -385,15 +386,34 @@ const startLive = (): void => {
   liveFrameId = requestAnimationFrame(onFrame);
 };
 
+// Time to first draw, i.e. the time it takes from giving all of our data to our instances to them having drawn it (and
+// the browser having painted it), which includes the time it takes to (re)create our instances, to process our data
+// (see plotData() in PlotWidget.vue), and to draw it (e.g., uploading it to the GPU and building its level of detail).
+
+const firstDrawStatus = vue.ref<string>(''); // Time to first draw of our data, if it was not plotted live.
+let showGeneration = 0; // Number of times that we showed our data, so that we can discard outdated time measurements.
+
 const showData = (): void => {
-  // Show our generated data, either all at once or live.
+  // Show our generated data, either live or all at once, in which case we measure the time to first draw.
+
+  const generation = ++showGeneration;
+
+  firstDrawStatus.value = '';
 
   if (live.value) {
     startLive();
   } else {
     stopLive();
 
+    const startTime = performance.now();
+
     datasets.value = generatedDatasets;
+
+    void nextPaint().then(() => {
+      if (generation === showGeneration) {
+        firstDrawStatus.value = `${formatNumber(Math.round(performance.now() - startTime))} ms`;
+      }
+    });
   }
 };
 
@@ -732,6 +752,7 @@ const statusRows = vue.computed(() => [
   { term: 'Points', value: plottedPoints.value },
   { term: 'Drawn points', value: drawnPoints.value },
   { term: 'Data', value: dataStatus.value },
+  { term: 'First draw', value: firstDrawStatus.value },
   { term: 'Live', value: liveStatus.value },
   { term: 'Benchmark', value: benchmarkStatus.value },
   { term: 'Redraw time', value: benchmarkRedrawStatus.value },
