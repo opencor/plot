@@ -58,6 +58,18 @@ export const create = (): ILevelOfDetail => {
   return { count: 0, sortedLength: 0, levels: [], selection: undefined };
 };
 
+export const memoryUsage = (lod: ILevelOfDetail): number => {
+  // Return the number of bytes used by the given level of detail, i.e. by its blocks and its selection.
+
+  let res = lod.selection?.indices.byteLength ?? 0;
+
+  for (const level of lod.levels) {
+    res += level.min.byteLength + level.max.byteLength + level.gap.byteLength;
+  }
+
+  return res;
+};
+
 export const invalidate = (lod: ILevelOfDetail, from: number): void => {
   // Invalidate the given level of detail from the given point onwards (i.e. those points may have changed).
 

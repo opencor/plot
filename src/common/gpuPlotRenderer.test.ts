@@ -886,6 +886,42 @@ describe('level of detail', () => {
     expect(calls(fake, 'deleteBuffer')).toEqual([[fake.buffers[0]], [fake.buffers[2]]]);
   });
 
+  it('reports how much memory it uses, in memory and on the GPU', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = values(NB_OF_POINTS);
+
+    expect(trace.memoryUsage()).toEqual({ cpu: 0, gpu: 0 });
+
+    // Our buffer (which can hold all of our points) and, once rendered, our level of detail and selection buffer (which
+    // can hold the maximum number of points that our level of detail may select, i.e. 4 per column plus 8).
+
+    trace.update(xValues, yValues);
+
+    expect(trace.memoryUsage()).toEqual({ cpu: 0, gpu: 8 * NB_OF_POINTS });
+
+    renderer.render(createFakeTarget().context, LOD_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+    ]);
+
+    const lod = levelOfDetailUtils.create();
+
+    levelOfDetailUtils.update(lod, xValues, yValues, NB_OF_POINTS);
+    levelOfDetailUtils.selectPoints(lod, xValues, yValues, 0, NB_OF_POINTS, LOD_AREA.xMin, LOD_AREA.xMax, 200);
+
+    expect(trace.memoryUsage()).toEqual({
+      cpu: levelOfDetailUtils.memoryUsage(lod),
+      gpu: 8 * NB_OF_POINTS + 8 * (4 * 200 + 8)
+    });
+
+    // Our buffers are gone once our context has been lost and restored.
+
+    fake.canvas?.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    fake.canvas?.dispatchEvent(new Event('webglcontextrestored'));
+
+    expect(trace.memoryUsage().gpu).toBe(0);
+  });
+
   it('uploads its selection in full again after its context got restored', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();

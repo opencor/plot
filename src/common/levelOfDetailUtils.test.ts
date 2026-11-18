@@ -5,6 +5,7 @@ import {
   type ILevelOfDetail,
   type ISelection,
   invalidate,
+  memoryUsage,
   selectPoints,
   update,
   visibleRange
@@ -142,6 +143,34 @@ const randomPoints = (random: () => number, nbOfPoints: number): [Float64Array, 
 describe('create()', () => {
   it('creates an empty level of detail', () => {
     expect(create()).toEqual({ count: 0, sortedLength: 0, levels: [], selection: undefined });
+  });
+});
+
+// memoryUsage().
+
+describe('memoryUsage()', () => {
+  it('returns the number of bytes used by its blocks and its selection', () => {
+    const nbOfPoints = 256;
+    const xValues = Float64Array.from({ length: nbOfPoints }, (_value, i) => i);
+    const lod = create();
+
+    expect(memoryUsage(lod)).toBe(0);
+
+    // Our blocks of points and blocks of blocks, each of which has a minimum index, a maximum index (both 32-bit
+    // integers), and a gap flag (an 8-bit integer).
+
+    update(lod, xValues, xValues, nbOfPoints);
+
+    const blocksMemoryUsage = lod.levels.reduce((sum, level) => sum + 9 * level.min.length, 0);
+
+    expect(lod.levels.length).toBe(2);
+    expect(memoryUsage(lod)).toBe(blocksMemoryUsage);
+
+    // Our selection, i.e. the (32-bit integer) index of our selected points.
+
+    const selection = selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 10) as ISelection;
+
+    expect(memoryUsage(lod)).toBe(blocksMemoryUsage + 4 * selection.indices.length);
   });
 });
 

@@ -319,9 +319,15 @@ const convertPoints = (
 
 // A trace, i.e. its data on the GPU.
 
+export interface IGpuPlotTraceMemoryUsage {
+  cpu: number; // Number of bytes used in memory, i.e. by our level of detail.
+  gpu: number; // Number of bytes used on the GPU, i.e. by our buffer and our selection buffer.
+}
+
 export interface IGpuPlotTrace {
   update: (xValues: Float64Array, yValues: Float64Array) => void;
   dispose: () => void;
+  memoryUsage: () => IGpuPlotTraceMemoryUsage;
 }
 
 interface IDrawnPoints {
@@ -780,9 +786,22 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       return res;
     };
 
+    const memoryUsage = (): IGpuPlotTraceMemoryUsage => {
+      // Return the number of bytes that we use in memory and on the GPU, ignoring our buffers if they belong to a lost
+      // context (since they are gone).
+
+      return {
+        cpu: levelOfDetailUtils.memoryUsage(lod),
+        gpu:
+          (buffer && bufferGeneration === generation ? capacity * BYTES_PER_POINT : 0) +
+          (selectionBuffer && selectionBufferGeneration === generation ? selectionBufferCapacity * BYTES_PER_POINT : 0)
+      };
+    };
+
     const res: IGpuPlotTraceInternals = {
       update,
       dispose,
+      memoryUsage,
       buffer: () => (bufferGeneration === generation ? buffer : null),
       count: () => count,
       originX: () => originX,

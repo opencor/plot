@@ -163,6 +163,7 @@ import OpenCORPlot, {
   type IPlotCsvExportEvent,
   type IPlotData,
   type IPlotMargins,
+  type IPlotMemoryUsage,
   type PlotActiveRenderer,
   type PlotRenderer,
   type PlotTheme
@@ -196,6 +197,21 @@ const xRange = vue.ref<'fixed' | 'growing'>('fixed');
 
 const formatNumber = (value: number): string => {
   return value.toLocaleString('en');
+};
+
+const formatBytes = (bytes: number): string => {
+  // Return the given number of bytes in B, KB, MB, or GB (with one decimal), whichever is the most appropriate.
+
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = bytes;
+  let unit = 0;
+
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    ++unit;
+  }
+
+  return unit ? `${value.toFixed(1)} ${units[unit]}` : `${value} B`;
 };
 
 const percentage = (ratio: number): string => {
@@ -239,6 +255,7 @@ const tooManyPoints = (instances: number, traces: number, points: number): boole
 
 const datasets = vue.shallowRef<IPlotData[]>([]);
 const dataStatus = vue.ref<string>('');
+const dataMemoryStatus = vue.ref<string>(''); // Memory used by our data.
 let generatedDatasets: IPlotData[] = [];
 let dataGeneration = 0;
 
@@ -263,6 +280,7 @@ const generateData = async (): Promise<void> => {
   datasets.value = [];
   generatedDatasets = [];
   dataStatus.value = 'Generating...';
+  dataMemoryStatus.value = '';
   firstDrawStatus.value = '';
 
   await nextPaint();
@@ -277,6 +295,19 @@ const generateData = async (): Promise<void> => {
     plotData(kind.value, nbOfTraces.value, nbOfPoints.value, instance)
   );
   dataStatus.value = `${formatNumber(totalNbOfPoints)} points in ${formatNumber(Math.round(performance.now() - startTime))} ms`;
+
+  // Determine how much memory our data uses, making sure that we count only once the X values that our traces share.
+
+  const buffers = new Set<ArrayBufferLike>();
+
+  for (const data of generatedDatasets) {
+    for (const trace of data.traces) {
+      buffers.add(trace.x.buffer);
+      buffers.add(trace.y.buffer);
+    }
+  }
+
+  dataMemoryStatus.value = formatBytes([...buffers].reduce((sum, buffer) => sum + buffer.byteLength, 0));
 
   showData();
 };
@@ -488,16 +519,25 @@ const fps = vue.ref<number>(0);
 const activeRenderers = vue.ref<string>('');
 const plottedPoints = vue.ref<string>('');
 const drawnPoints = vue.ref<string>('');
+const lodMemoryStatus = vue.ref<string>(''); // Memory used by the levels of detail of our instances.
+const logMemoryStatus = vue.ref<string>(''); // Memory used by the logarithm of the values of our instances.
+const gpuMemoryStatus = vue.ref<string>(''); // Memory used by our instances on the GPU.
 let fpsFrameId = 0;
 
 const updateDrawingStatus = (): void => {
   const counts = new Map<PlotActiveRenderer, number>();
   let nbOfPoints = 0;
   let nbOfDrawnPoints = 0;
+  const memoryUsage: IPlotMemoryUsage = { levelOfDetail: 0, logValues: 0, gpu: 0 };
 
   for (const plot of plotRefs.slice(0, datasets.value.length)) {
     if (plot) {
       const pointCounts = plot.pointCounts();
+      const plotMemoryUsage = plot.memoryUsage();
+
+      memoryUsage.levelOfDetail += plotMemoryUsage.levelOfDetail;
+      memoryUsage.logValues += plotMemoryUsage.logValues;
+      memoryUsage.gpu += plotMemoryUsage.gpu;
 
       counts.set(plot.activeRenderer, (counts.get(plot.activeRenderer) ?? 0) + 1);
 
@@ -511,6 +551,9 @@ const updateDrawingStatus = (): void => {
   }
 
   plottedPoints.value = formatNumber(nbOfPoints);
+  lodMemoryStatus.value = formatBytes(memoryUsage.levelOfDetail);
+  logMemoryStatus.value = formatBytes(memoryUsage.logValues);
+  gpuMemoryStatus.value = formatBytes(memoryUsage.gpu);
   drawnPoints.value = `${formatNumber(nbOfDrawnPoints)}${nbOfPoints ? ` (${percentage(nbOfDrawnPoints / nbOfPoints)})` : ''}`;
 
   activeRenderers.value =
@@ -753,6 +796,10 @@ const statusRows = vue.computed(() => [
   { term: 'Drawn points', value: drawnPoints.value },
   { term: 'Data', value: dataStatus.value },
   { term: 'First draw', value: firstDrawStatus.value },
+  { term: 'Data memory', value: dataMemoryStatus.value },
+  { term: 'LOD memory', value: lodMemoryStatus.value },
+  { term: 'Log memory', value: logMemoryStatus.value },
+  { term: 'GPU memory', value: gpuMemoryStatus.value },
   { term: 'Live', value: liveStatus.value },
   { term: 'Benchmark', value: benchmarkStatus.value },
   { term: 'Redraw time', value: benchmarkRedrawStatus.value },

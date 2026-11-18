@@ -240,6 +240,15 @@ export interface IPlotPointCounts {
   nbOfDrawnPoints: number; // Number of those points that actually got drawn (see pointCounts()).
 }
 
+// The number of bytes that we use for our own purposes, i.e. not counting our data (which belongs to our consumer), see
+// memoryUsage(). This is mainly meant for testing and benchmarking.
+
+export interface IPlotMemoryUsage {
+  levelOfDetail: number; // Our levels of detail (for both of our renderers) and our Canvas 2D selection.
+  logValues: number; // The decimal logarithm of our values along our logarithmic axes (see plotValues()).
+  gpu: number; // The buffers of our traces on the GPU (see gpuPlotRenderer.ts).
+}
+
 // Context menu event, which is emitted rather than showing our context menu if we are to use a custom context menu (see
 // customContextMenu), so that it can be shown instead. Its items are those of our context menu (including their state,
 // e.g. whether an axis is logarithmic, and their command, e.g. to zoom in around where our context menu was requested).
@@ -422,6 +431,41 @@ const pointCounts = (): IPlotPointCounts => {
   return res;
 };
 
+const memoryUsage = (): IPlotMemoryUsage => {
+  // Return the number of bytes that we use for our own purposes (see IPlotMemoryUsage).
+  // Note #1: like pointCounts(), this is not reactive, i.e. it is meant to be polled.
+  // Note #2: our statistics (see plotValues()) only use a few bytes per trace, so we don't count them. Neither do we
+  //          count the buffers that our GPU plot renderer shares between all of our instances (e.g., to convert our
+  //          data before uploading it).
+
+  const res: IPlotMemoryUsage = {
+    levelOfDetail: canvasSelectionXValues.byteLength + canvasSelectionYValues.byteLength,
+    logValues: 0,
+    gpu: 0
+  };
+
+  for (const canvasTrace of canvasTraces) {
+    if (canvasTrace) {
+      res.levelOfDetail += levelOfDetailUtils.memoryUsage(canvasTrace.lod);
+    }
+  }
+
+  for (const gpuTrace of gpuTraces) {
+    if (gpuTrace) {
+      const gpuTraceMemoryUsage = gpuTrace.memoryUsage();
+
+      res.levelOfDetail += gpuTraceMemoryUsage.cpu;
+      res.gpu += gpuTraceMemoryUsage.gpu;
+    }
+  }
+
+  for (const plotted of plottedValues) {
+    res.logValues += (plotted.x.log?.buffer.byteLength ?? 0) + (plotted.y.log?.buffer.byteLength ?? 0);
+  }
+
+  return res;
+};
+
 // The renderer that we actually used to draw our traces the last time our plot got drawn (see prepareFrame()).
 
 const activeRenderer = vue.ref<PlotActiveRenderer>('canvas');
@@ -429,6 +473,7 @@ const activeRenderer = vue.ref<PlotActiveRenderer>('canvas');
 defineExpose({
   activeRenderer: vue.readonly(activeRenderer),
   contextMenuHidden,
+  memoryUsage,
   pointCounts,
   resetMargins,
   resize

@@ -18,6 +18,7 @@ export type {
   IPlotCsvExportStartedEvent,
   IPlotData,
   IPlotMargins,
+  IPlotMemoryUsage,
   IPlotPointCounts,
   IPlotTrace
 } from './src/widgets/PlotWidget.vue';
