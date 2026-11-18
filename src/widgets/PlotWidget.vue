@@ -4626,22 +4626,28 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 };
 
 // Whether our traces are to be drawn using Canvas 2D rather than WebGL when our renderer is 'auto', based on how both
-// renderers perform in different browsers (using our demo's benchmark, which zooms and pans our traces):
-//  - Chrome: Canvas 2D is faster (1.3 to 2.7 times) for traces which X values are sorted, thanks to our level of
-//    detail (see linearPathPoints()), but WebGL is much faster (2 to 6 times) for traces which X values are not sorted
-//    (e.g., a phase plot), since all of their points need to be drawn;
-//  - Safari: like Chrome, except that WebGL is much slower than Canvas 2D (about 10 times) when there are many plots
-//    (e.g., 16 of them); and
+// renderers perform in different browsers (using our demo's benchmark, which zooms, pans, and plots live our traces):
+//  - Chrome: Canvas 2D is faster (1.3 to 2.7 times) when it only needs to stroke a few points per pixel column of a
+//    trace, thanks to our level of detail (see linearPathPoints()), but WebGL is much faster (2 to 6 times) when all
+//    the points of a trace need to be stroked because its X values are not sorted (e.g., a phase plot), from about
+//    300,000 points between such traces. However, WebGL has a cost of about 0.1 ms per trace, so both renderers are
+//    about as fast when all the points of many traces need to be stroked because they are too short for our level of
+//    detail to be used (e.g., 30 to 100 traces of 10,000 points);
+//  - Safari: like Chrome, except that WebGL has no such cost per trace, i.e. it is much faster (2 to 20 times) whenever
+//    Canvas 2D needs to stroke many points (e.g., 100 traces of 10,000 points), but it is much slower than Canvas 2D
+//    (about 10 times) when there are many plots (e.g., 16 of them); and
 //  - Firefox: Canvas 2D takes a very long time to stroke a dense trace that goes up and down (e.g., noisy data), which
 //    nothing on our side can avoid (we tried using different line joins, stroking a trace in chunks, and drawing it
 //    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
-// So, we use Canvas 2D in browsers other than Firefox, unless our visible traces which X values are not sorted have at
-// least AUTO_WEBGL_MIN_UNSORTED_POINTS points between them.
+// So, we use Canvas 2D in browsers other than Firefox, unless it would need to stroke at least
+// AUTO_WEBGL_MIN_CANVAS_POINTS points for our visible traces, i.e. all the points of a trace, unless our level of detail
+// is used for it (see linearPathPoints()), in which case at most AUTO_CANVAS_POINTS_PER_COLUMN points per column.
 // Note: we only check whether the X values of a trace are sorted (using its level of detail, see
 //       levelOfDetailUtils.ts) if our visible traces have enough points between them for it to matter, so that we
 //       don't create a level of detail for a trace that doesn't otherwise need one.
 
-const AUTO_WEBGL_MIN_UNSORTED_POINTS = 1000000;
+const AUTO_WEBGL_MIN_CANVAS_POINTS = 300000;
+const AUTO_CANVAS_POINTS_PER_COLUMN = 4; // First, minimum, maximum, and last points of a column (see linearPath()).
 
 const isFirefox = typeof navigator !== 'undefined' && navigator.userAgent.includes('Firefox/');
 
@@ -4659,6 +4665,12 @@ const useCanvas2D = (u: uPlot): boolean => {
   // Determine the number of points of our visible traces, and make sure that they have enough of them for our check to
   // matter.
 
+  const area = pathArea(u);
+
+  if (!area) {
+    return true;
+  }
+
   const visibleTraces: [traceIndex: number, xValues: Float64Array, yValues: Float64Array, nbOfPoints: number][] = [];
   let nbOfPoints = 0;
 
@@ -4674,21 +4686,31 @@ const useCanvas2D = (u: uPlot): boolean => {
     }
   }
 
-  if (nbOfPoints < AUTO_WEBGL_MIN_UNSORTED_POINTS) {
+  if (nbOfPoints < AUTO_WEBGL_MIN_CANVAS_POINTS) {
     return true;
   }
 
-  // Determine the number of points of our visible traces which X values are not sorted.
+  // Determine the number of points that Canvas 2D would need to stroke for our visible traces, i.e. all the points of a
+  // trace, unless our level of detail would be used for it (see linearPathPoints()).
 
-  let nbOfUnsortedPoints = 0;
+  const nbOfColumns = Math.ceil(area.width) + 1;
+  const minNbOfPoints = levelOfDetailUtils.MIN_POINTS_PER_COLUMN * nbOfColumns;
+  const maxNbOfLodPoints = AUTO_CANVAS_POINTS_PER_COLUMN * nbOfColumns;
+  let nbOfCanvasPoints = 0;
 
   for (const [traceIndex, xValues, yValues, nbOfTracePoints] of visibleTraces) {
-    if (updatedTraceLod(autoLodUses, traceIndex, xValues, yValues, nbOfTracePoints).sortedLength < nbOfTracePoints) {
-      nbOfUnsortedPoints += nbOfTracePoints;
+    if (
+      props.levelOfDetail &&
+      nbOfTracePoints > minNbOfPoints &&
+      updatedTraceLod(autoLodUses, traceIndex, xValues, yValues, nbOfTracePoints).sortedLength === nbOfTracePoints
+    ) {
+      nbOfCanvasPoints += maxNbOfLodPoints;
+    } else {
+      nbOfCanvasPoints += nbOfTracePoints;
     }
   }
 
-  return nbOfUnsortedPoints < AUTO_WEBGL_MIN_UNSORTED_POINTS;
+  return nbOfCanvasPoints < AUTO_WEBGL_MIN_CANVAS_POINTS;
 };
 
 const prepareFrame = (u: uPlot): void => {
