@@ -616,15 +616,15 @@ describe('level of detail', () => {
 
   const selectedPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
     // Return the points that our level of detail selects for the given values and plotting area, relative to their
-    // first point and as 32-bit floats (or as gaps, for points with a non-finite Y value), i.e. what our renderer should
-    // upload.
+    // first point and as 32-bit floats (or as gaps, for points with a non-finite X or Y value), i.e. what our renderer
+    // should upload.
 
     const nbOfPoints = Math.min(xValues.length, yValues.length);
     const lod = levelOfDetailUtils.create();
 
     levelOfDetailUtils.update(lod, xValues, yValues, nbOfPoints);
 
-    const [start, end] = levelOfDetailUtils.visibleRange(xValues, nbOfPoints, area.xMin, area.xMax);
+    const [start, end] = levelOfDetailUtils.visibleRange(lod, xValues, yValues, nbOfPoints, area.xMin, area.xMax);
     const selection = levelOfDetailUtils.selectPoints(
       lod,
       xValues,
@@ -637,7 +637,7 @@ describe('level of detail', () => {
     );
 
     return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) =>
-      Number.isFinite(yValues[index] as number)
+      Number.isFinite(xValues[index] as number) && Number.isFinite(yValues[index] as number)
         ? [
             Math.fround((xValues[index] as number) - (xValues[0] as number)),
             Math.fround((yValues[index] as number) - (yValues[0] as number))
@@ -778,6 +778,12 @@ describe('level of detail', () => {
     const trace = renderer.createTrace();
     const [xValues, yValues] = values(NB_OF_POINTS);
 
+    // Note: a gap may be due to a non-finite X value, or to a non-finite Y value, in which case its X value doesn't
+    //       matter (i.e. it may not be sorted).
+
+    xValues[3000] = Number.NaN;
+    xValues[4000] = -1;
+    yValues[4000] = Number.NaN;
     yValues[5000] = Number.NaN;
     yValues.fill(Number.POSITIVE_INFINITY, 7000, 7100);
 
@@ -793,10 +799,11 @@ describe('level of detail', () => {
     const nbOfSelectedPoints = expectedPoints.length / 2;
 
     expect(nbOfSelectedPoints).toBeLessThan(NB_OF_POINTS / 2);
-    // Our gaps are uploaded as such, i.e. our gap at point 5,000 and our gap from point 7,000 to 7,099, which spans two
-    // columns (of 50 points each), hence it is selected twice (once per column).
+    // Our gaps are uploaded as such, i.e. our gaps at points 3,000, 4,000, and 5,000, and our gap from point 7,000 to
+    // 7,099, which is only selected once even though it spans two columns (of 50 points each), since a gap belongs to
+    // the column of the finite point that follows it (see Note #8 of levelOfDetailUtils.ts).
 
-    expect(expectedPoints.filter((value) => value === Math.fround(3.0e38)).length).toBe(2 * 3);
+    expect(expectedPoints.filter((value) => value === Math.fround(3.0e38)).length).toBe(2 * 4);
     expect(fake.buffers.length).toBe(2);
     expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
     expect(lineDraws(fake)).toEqual([[0, nbOfSelectedPoints - 1]]);

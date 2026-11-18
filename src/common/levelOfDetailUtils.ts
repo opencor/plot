@@ -9,8 +9,9 @@
 //          rather than O(number of points). (Our columns don't have to be pixel columns, e.g. our GPU plot renderer
 //          uses several columns per pixel, see Note #7 of gpuPlotRenderer.ts.)
 // Note #2: to find the points with the minimum and maximum Y values of a range of points quickly, we keep, for each
-//          block of BLOCK_SIZE points, the index of its point with the minimum (and maximum) Y value, and whether it
-//          has a non-finite Y value (i.e. a gap). We then do the same for each block of BLOCK_SIZE blocks, and so on.
+//          block of BLOCK_SIZE points, the index of its finite point with the minimum (and maximum) Y value, and
+//          whether it has a gap (i.e. a point with a non-finite X or Y value). We then do the same for each block of
+//          BLOCK_SIZE blocks, and so on.
 //          This means that finding those points costs O(BLOCK_SIZE * log(number of points)) rather than O(number of
 //          points).
 // Note #3: like the rest of our data processing (see traceValues.ts), our blocks are kept up to date incrementally,
@@ -34,15 +35,20 @@
 // Note #7: a level of detail may be shared (e.g., by the two renderers of a plot), so each selection has a number, so
 //          that a consumer can tell whether a selection directly follows the one it last used (in which case only its
 //          points from firstChanged onwards may differ from it) or not (in which case all of them may differ).
+// Note #8: a gap may have a non-finite X value (e.g., a logarithmic X axis and a non-positive X value), or a finite X
+//          value that is anywhere (since it doesn't get drawn), so only the X values of our finite points need to be
+//          sorted. This means that, when looking for the first point that is in a given column, we look at the first
+//          finite point from a given point, skipping our gaps as described in Note #4 (i.e. the gaps between two finite
+//          points belong to the column of the second one).
 
 const BLOCK_SIZE = 16;
 
 export const MIN_POINTS_PER_COLUMN = 8; // Minimum number of (visible) points per column for us to be worth using.
 
 interface ILevel {
-  min: Int32Array; // Index of the point with the minimum (finite) Y value of a block, or -1 if there is none.
-  max: Int32Array; // Index of the point with the maximum (finite) Y value of a block, or -1 if there is none.
-  gap: Uint8Array; // Whether a block has a non-finite Y value.
+  min: Int32Array; // Index of the finite point with the minimum Y value of a block, or -1 if there is none.
+  max: Int32Array; // Index of the finite point with the maximum Y value of a block, or -1 if there is none.
+  gap: Uint8Array; // Whether a block has a gap, i.e. a point with a non-finite X or Y value.
 }
 
 export interface ISelection {
@@ -60,7 +66,7 @@ export interface ISelection {
 
 export interface ILevelOfDetail {
   count: number; // Number of points that we have processed.
-  sortedLength: number; // Number of leading points whose X values are finite and sorted in increasing order.
+  sortedLength: number; // Number of leading points whose finite points have sorted X values (see Note #8 above).
   levels: ILevel[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
   selection: ISelection | undefined; // Our last selection of points (see selectPoints()).
   nbOfSelections: number; // Number of selections that we have made (see Note #7 above).
@@ -119,9 +125,59 @@ const levelWithCapacity = (lod: ILevelOfDetail, index: number, capacity: number)
   return level;
 };
 
+const isGap = (xValues: Float64Array, yValues: Float64Array, index: number): boolean => {
+  // Return whether the given point is a gap, i.e. whether its X or Y value is not finite.
+  // Note: we use x - x !== 0 to check whether x is not finite since it is faster than !Number.isFinite().
+
+  const x = xValues[index] as number;
+  const y = yValues[index] as number;
+
+  return x - x !== 0 || y - y !== 0;
+};
+
+const previousFinitePoint = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  from: number
+): number => {
+  // Return the index of the last finite point, up to the given point (included), or -1 if there is none. To do so, we
+  // skip, backwards, the biggest blocks that we can, i.e. those that have no finite point (see Note #4 above).
+  // Note: the blocks that we skip end at or before the given point, so they are up to date.
+
+  const levels = lod.levels;
+  let i = from;
+
+  while (i >= 0) {
+    let skipped = false;
+
+    for (let levelIndex = (i + 1) % BLOCK_SIZE === 0 ? levels.length - 1 : -1; levelIndex >= 0; --levelIndex) {
+      const blockSize = BLOCK_SIZE ** (levelIndex + 1);
+
+      if ((i + 1) % blockSize === 0 && (levels[levelIndex] as ILevel).min[(i + 1) / blockSize - 1] === -1) {
+        i -= blockSize;
+        skipped = true;
+
+        break;
+      }
+    }
+
+    if (!skipped) {
+      if (!isGap(xValues, yValues, i)) {
+        return i;
+      }
+
+      --i;
+    }
+  }
+
+  return -1;
+};
+
 export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Process the given points from the first one that we haven't processed (see invalidate()).
-  // Note: like convertPoints() in gpuPlotRenderer.ts, our loops only use local variables, so that they are fast.
+  // Note #1: like convertPoints() in gpuPlotRenderer.ts, our loops only use local variables, so that they are fast.
+  // Note #2: we use x - x === 0 to check whether x is finite since it is faster than Number.isFinite().
 
   const from = lod.count;
 
@@ -129,35 +185,17 @@ export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Floa
     return;
   }
 
-  // Determine how many of our leading points have finite X values that are sorted.
-  // Note: we use x - x === 0 to check whether x is finite since it is faster than Number.isFinite().
-
-  let sortedLength = lod.sortedLength;
-
-  if (sortedLength === from) {
-    let previous = sortedLength > 0 ? (xValues[sortedLength - 1] as number) : Number.NEGATIVE_INFINITY;
-
-    while (sortedLength < count) {
-      const x = xValues[sortedLength] as number;
-
-      if (x - x !== 0 || x < previous) {
-        break;
-      }
-
-      previous = x;
-      ++sortedLength;
-    }
-
-    lod.sortedLength = sortedLength;
-  }
-
   // Update our blocks of points.
 
   let firstBlock = Math.floor(from / BLOCK_SIZE);
   let nbOfBlocks = Math.ceil(count / BLOCK_SIZE);
 
+  let nbOfLevels = 0;
+
   if (count >= BLOCK_SIZE) {
     const { min, max, gap } = levelWithCapacity(lod, 0, nbOfBlocks);
+
+    nbOfLevels = 1;
 
     for (let block = firstBlock; block < nbOfBlocks; ++block) {
       const end = Math.min(count, (block + 1) * BLOCK_SIZE);
@@ -168,9 +206,10 @@ export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Floa
       let hasGap = 0;
 
       for (let i = block * BLOCK_SIZE; i < end; ++i) {
+        const x = xValues[i] as number;
         const y = yValues[i] as number;
 
-        if (y - y === 0) {
+        if (x - x === 0 && y - y === 0) {
           if (y < minValue) {
             minValue = y;
             minIndex = i;
@@ -231,12 +270,45 @@ export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Floa
     }
 
     blockSize *= BLOCK_SIZE;
+    nbOfLevels = levelIndex + 1;
+  }
+
+  // Drop the levels that we may have had for more points (e.g., before our points were replaced with fewer ones), since
+  // their blocks would be out of date (and we skip blocks from the top level, see skipBlocks()).
+
+  lod.levels.length = nbOfLevels;
+
+  // Determine how many of our leading points have sorted X values for their finite points (see Note #8 above), carrying
+  // on from the last finite point that we have already processed, if any.
+
+  let sortedLength = lod.sortedLength;
+
+  if (sortedLength === from) {
+    const previousIndex = previousFinitePoint(lod, xValues, yValues, sortedLength - 1);
+    let previous = previousIndex >= 0 ? (xValues[previousIndex] as number) : Number.NEGATIVE_INFINITY;
+
+    while (sortedLength < count) {
+      const x = xValues[sortedLength] as number;
+      const y = yValues[sortedLength] as number;
+
+      if (x - x === 0 && y - y === 0) {
+        if (x < previous) {
+          break;
+        }
+
+        previous = x;
+      }
+
+      ++sortedLength;
+    }
+
+    lod.sortedLength = sortedLength;
   }
 
   lod.count = count;
 };
 
-// The result of a query (see query()), i.e. the index of the point with the minimum (and maximum) finite Y value of a
+// The result of a query (see query()), i.e. the index of the finite point with the minimum (and maximum) Y value of a
 // range of points (or -1 if there is none), their Y value, and whether that range has a gap.
 // Note: our query functions only use local variables (and update this result once per call), so that they are fast
 //       (see update()).
@@ -257,7 +329,7 @@ const resetQueryResult = (): void => {
   queryResult[QUERY_HAS_GAP] = 0;
 };
 
-const queryPoints = (yValues: Float64Array, start: number, end: number): void => {
+const queryPoints = (xValues: Float64Array, yValues: Float64Array, start: number, end: number): void => {
   // Take the given points into account in our query result.
 
   if (start >= end) {
@@ -271,9 +343,10 @@ const queryPoints = (yValues: Float64Array, start: number, end: number): void =>
   let hasGap = queryResult[QUERY_HAS_GAP] as number;
 
   for (let i = start; i < end; ++i) {
+    const x = xValues[i] as number;
     const y = yValues[i] as number;
 
-    if (y - y === 0) {
+    if (x - x === 0 && y - y === 0) {
       if (y < minValue) {
         minValue = y;
         minIndex = i;
@@ -338,7 +411,7 @@ const queryBlocks = (level: ILevel, yValues: Float64Array, start: number, end: n
   queryResult[QUERY_HAS_GAP] = hasGap;
 };
 
-const query = (lod: ILevelOfDetail, yValues: Float64Array, start: number, end: number): void => {
+const query = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array, start: number, end: number): void => {
   // Query the given range of points, i.e. from the given start (included) to the given end (excluded), going through
   // the raw points and then the blocks (of the different levels) that cover our range.
 
@@ -356,7 +429,7 @@ const query = (lod: ILevelOfDetail, yValues: Float64Array, start: number, end: n
       if (level) {
         queryBlocks(level, yValues, low, high);
       } else {
-        queryPoints(yValues, low, high);
+        queryPoints(xValues, yValues, low, high);
       }
 
       break;
@@ -372,8 +445,8 @@ const query = (lod: ILevelOfDetail, yValues: Float64Array, start: number, end: n
       queryBlocks(level, yValues, low, alignedLow);
       queryBlocks(level, yValues, alignedHigh, high);
     } else {
-      queryPoints(yValues, low, alignedLow);
-      queryPoints(yValues, alignedHigh, high);
+      queryPoints(xValues, yValues, low, alignedLow);
+      queryPoints(xValues, yValues, alignedHigh, high);
     }
 
     low = alignedLow / BLOCK_SIZE;
@@ -381,18 +454,29 @@ const query = (lod: ILevelOfDetail, yValues: Float64Array, start: number, end: n
   }
 };
 
-const lowerBound = (values: Float64Array, start: number, end: number, value: number): number => {
-  // Return the index of the first of the given (sorted) values, between the given start and end, that is not less than
-  // the given value (or the given end if there is none).
+const lowerBound = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  start: number,
+  end: number,
+  value: number
+): number => {
+  // Return the index of the first of the given points, between the given start and end, from which the first finite
+  // point (if any) has an X value that is not less than the given value (or the given end if there is none), see Note
+  // #8 above.
+  // Note: if there is no finite point from our middle point to our high point, then our middle point is like our high
+  //       point.
 
   let low = start;
   let high = end;
 
   while (low < high) {
     const middle = (low + high) >>> 1;
+    const finite = skipBlocks(lod, xValues, yValues, middle, high, false);
 
-    if ((values[middle] as number) < value) {
-      low = middle + 1;
+    if (finite < high && (xValues[finite] as number) < value) {
+      low = finite + 1;
     } else {
       high = middle;
     }
@@ -401,7 +485,14 @@ const lowerBound = (values: Float64Array, start: number, end: number, value: num
   return low;
 };
 
-const gallopingLowerBound = (values: Float64Array, start: number, end: number, value: number): number => {
+const gallopingLowerBound = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  start: number,
+  end: number,
+  value: number
+): number => {
   // Same as lowerBound(), but for a value that is expected to be close to the given start (e.g., the next column
   // boundary in selectPoints()), in which case it is faster.
 
@@ -409,27 +500,40 @@ const gallopingLowerBound = (values: Float64Array, start: number, end: number, v
   let high = start;
   let step = 1;
 
-  while (high < end && (values[high] as number) < value) {
-    low = high + 1;
-    high += step;
+  while (high < end) {
+    const finite = skipBlocks(lod, xValues, yValues, high, end, false);
+
+    if (finite === end || (xValues[finite] as number) >= value) {
+      break;
+    }
+
+    low = finite + 1;
+    high = finite + step;
     step *= 2;
   }
 
-  return lowerBound(values, low, Math.min(high, end), value);
+  return lowerBound(lod, xValues, yValues, low, Math.min(high, end), value);
 };
 
-const upperBound = (values: Float64Array, start: number, end: number, value: number): number => {
-  // Return the index of the first of the given (sorted) values, between the given start and end, that is greater than
-  // the given value (or the given end if there is none).
+const upperBound = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  start: number,
+  end: number,
+  value: number
+): number => {
+  // Same as lowerBound(), but for an X value that is greater than the given value.
 
   let low = start;
   let high = end;
 
   while (low < high) {
     const middle = (low + high) >>> 1;
+    const finite = skipBlocks(lod, xValues, yValues, middle, high, false);
 
-    if ((values[middle] as number) <= value) {
-      low = middle + 1;
+    if (finite < high && (xValues[finite] as number) <= value) {
+      low = finite + 1;
     } else {
       high = middle;
     }
@@ -439,17 +543,20 @@ const upperBound = (values: Float64Array, start: number, end: number, value: num
 };
 
 export const visibleRange = (
+  lod: ILevelOfDetail,
   xValues: Float64Array,
+  yValues: Float64Array,
   count: number,
   xMin: number,
   xMax: number
 ): [start: number, end: number] => {
-  // Return the range of the given points (whose X values must be sorted) that we need to draw for the given X range,
-  // i.e. the points within that range, as well as the points just before and after it (so that our trace goes all the
-  // way to the edges of our plotting area).
+  // Return the range of the given points (whose finite points must have sorted X values, see Note #8 above) that we
+  // need to draw for the given X range, i.e. the points within that range, as well as the points just before and after
+  // it (so that our trace goes all the way to the edges of our plotting area).
+  // Note: our level of detail must be up to date (see update()).
 
-  const start = lowerBound(xValues, 0, count, xMin);
-  const end = upperBound(xValues, start, count, xMax);
+  const start = lowerBound(lod, xValues, yValues, 0, count, xMin);
+  const end = upperBound(lod, xValues, yValues, start, count, xMax);
 
   return [Math.max(0, start - 1), Math.min(count, end + 1)];
 };
@@ -476,7 +583,14 @@ const selectionIndices = (selection: ISelection, nbOfPoints: number, nbOfNewPoin
   return selection.indices;
 };
 
-const skipBlocks = (lod: ILevelOfDetail, yValues: Float64Array, from: number, end: number, gaps: boolean): number => {
+const skipBlocks = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  from: number,
+  end: number,
+  gaps: boolean
+): number => {
   // Return the index of the first point, from the given point (included) to the given end (excluded), that is a gap (if
   // we are looking for gaps) or that is finite (otherwise), or the given end if there is none. To do so, we skip the
   // biggest blocks that we can, i.e. those that have no gap (if we are looking for gaps) or no finite point
@@ -507,9 +621,7 @@ const skipBlocks = (lod: ILevelOfDetail, yValues: Float64Array, from: number, en
     }
 
     if (!skipped) {
-      const y = yValues[i] as number;
-
-      if ((y - y !== 0) === gaps) {
+      if (isGap(xValues, yValues, i) === gaps) {
         return i;
       }
 
@@ -557,6 +669,7 @@ const selectRunPoints = (
 
 const selectFiniteRunPoints = (
   lod: ILevelOfDetail,
+  xValues: Float64Array,
   yValues: Float64Array,
   start: number,
   end: number,
@@ -568,13 +681,13 @@ const selectFiniteRunPoints = (
   // Select the points of the given run of finite points, which minimum and maximum Y values are known, if it doesn't
   // follow a gap. Otherwise, select its first point and the points of the rest of it (see Note #5 above).
 
-  if (start === 0 || (yValues[start - 1] as number) - (yValues[start - 1] as number) === 0 || end - start === 1) {
+  if (start === 0 || !isGap(xValues, yValues, start - 1) || end - start === 1) {
     return selectRunPoints(selection, nbOfPoints, start, end, minIndex, maxIndex);
   }
 
   selectionIndices(selection, nbOfPoints, 1)[nbOfPoints] = start;
 
-  query(lod, yValues, start + 1, end);
+  query(lod, xValues, yValues, start + 1, end);
 
   return selectRunPoints(
     selection,
@@ -588,6 +701,7 @@ const selectFiniteRunPoints = (
 
 const selectRangePoints = (
   lod: ILevelOfDetail,
+  xValues: Float64Array,
   yValues: Float64Array,
   start: number,
   end: number,
@@ -612,11 +726,12 @@ const selectRangePoints = (
 
   // Select the first, minimum, maximum, and last points of a range that has no gap.
 
-  query(lod, yValues, start, end);
+  query(lod, xValues, yValues, start, end);
 
   if (!queryResult[QUERY_HAS_GAP]) {
     return selectFiniteRunPoints(
       lod,
+      xValues,
       yValues,
       start,
       end,
@@ -627,33 +742,24 @@ const selectRangePoints = (
     );
   }
 
-  // Select the first point of a range that has no finite point, i.e. that is a gap.
-
-  if (queryResult[QUERY_MIN_INDEX] === -1) {
-    selectionIndices(selection, nbOfPoints, 1)[nbOfPoints] = start;
-
-    return nbOfPoints + 1;
-  }
-
   // Our range has gaps, so select the first point of each gap and the points of each run of finite points.
 
   let res = nbOfPoints;
   let i = start;
 
   while (i < end) {
-    const y = yValues[i] as number;
-
-    if (y - y !== 0) {
+    if (isGap(xValues, yValues, i)) {
       selectionIndices(selection, res, 1)[res++] = i;
 
-      i = skipBlocks(lod, yValues, i + 1, end, false);
+      i = skipBlocks(lod, xValues, yValues, i + 1, end, false);
     } else {
-      const runEnd = skipBlocks(lod, yValues, i + 1, end, true);
+      const runEnd = skipBlocks(lod, xValues, yValues, i + 1, end, true);
 
-      query(lod, yValues, i, runEnd);
+      query(lod, xValues, yValues, i, runEnd);
 
       res = selectFiniteRunPoints(
         lod,
+        xValues,
         yValues,
         i,
         runEnd,
@@ -684,8 +790,8 @@ export const selectPoints = (
   // Note: our level of detail must be up to date (see update()).
 
   // Our points are selected range by range, i.e. iteration k selects the points of [b(k - 1), b(k)), where b(-1) is
-  // our start, b(k) is the first point whose X value is not less than boundary(k) (for 0 <= k <= nbOfColumns), and
-  // b(nbOfColumns + 1) is our end.
+  // our start, b(k) is the first point from which the first finite point has an X value that is not less than
+  // boundary(k) (for 0 <= k <= nbOfColumns, see lowerBound()), and b(nbOfColumns + 1) is our end.
 
   const columnWidth = (xMax - xMin) / nbOfColumns;
   const boundary = (k: number): number => (k === nbOfColumns ? xMax : xMin + k * columnWidth);
@@ -695,7 +801,10 @@ export const selectPoints = (
   let nbOfPoints = 0;
 
   // Check whether we can reuse (some of) our previous selection (see Note #6 above), i.e. resume from the range that
-  // contains the first point that may have changed (or the last point that we previously had).
+  // contains the last finite point up to the first point that may have changed (or the last point that we previously
+  // had).
+  // Note: the ranges before that range only depend on the points up to that finite point (see lowerBound()), so they
+  //       cannot have changed.
 
   if (
     selection &&
@@ -704,12 +813,12 @@ export const selectPoints = (
     selection.nbOfColumns === nbOfColumns &&
     selection.start === start
   ) {
-    const firstChangedPoint = Math.min(selection.validCount, selection.end) - 1;
+    const finitePoint = previousFinitePoint(lod, xValues, yValues, Math.min(selection.validCount, selection.end) - 1);
 
-    if (firstChangedPoint >= start) {
-      // Determine the last boundary that is not greater than the X value of our first changed point, if any.
+    if (finitePoint >= start) {
+      // Determine the last boundary that is not greater than the X value of our finite point, if any.
 
-      const x = xValues[firstChangedPoint] as number;
+      const x = xValues[finitePoint] as number;
       let k = Math.max(-1, Math.min(nbOfColumns, Math.floor((x - xMin) / columnWidth)));
 
       while (k < nbOfColumns && boundary(k + 1) <= x) {
@@ -722,7 +831,7 @@ export const selectPoints = (
 
       if (k >= 0) {
         iteration = k + 1;
-        rangeStart = lowerBound(xValues, start, end, boundary(k));
+        rangeStart = lowerBound(lod, xValues, yValues, start, end, boundary(k));
 
         // Keep our previously selected points that come before our range start.
 
@@ -768,21 +877,31 @@ export const selectPoints = (
   }
 
   // Select our points from our range start.
+  // Note: we keep track of the first finite point from our range start, so that we don't have to look for it again for
+  //       each of our ranges that is empty (e.g., for each column within a long gap, which we would otherwise have to
+  //       skip again, see lowerBound()).
 
   selection.firstChanged = nbOfPoints;
 
-  for (; iteration <= nbOfColumns + 1; ++iteration) {
-    const rangeEnd =
-      iteration > nbOfColumns
-        ? end
-        : gallopingLowerBound(
-            xValues,
-            rangeStart,
-            end,
-            iteration === nbOfColumns ? xMax : xMin + iteration * columnWidth
-          );
+  let nextFinitePoint = -1;
 
-    nbOfPoints = selectRangePoints(lod, yValues, rangeStart, rangeEnd, selection, nbOfPoints);
+  for (; iteration <= nbOfColumns + 1; ++iteration) {
+    let rangeEnd = end;
+
+    if (iteration <= nbOfColumns) {
+      const value = iteration === nbOfColumns ? xMax : xMin + iteration * columnWidth;
+
+      if (nextFinitePoint < rangeStart) {
+        nextFinitePoint = skipBlocks(lod, xValues, yValues, rangeStart, end, false);
+      }
+
+      rangeEnd =
+        nextFinitePoint === end || (xValues[nextFinitePoint] as number) >= value
+          ? rangeStart
+          : gallopingLowerBound(lod, xValues, yValues, nextFinitePoint + 1, end, value);
+    }
+
+    nbOfPoints = selectRangePoints(lod, xValues, yValues, rangeStart, rangeEnd, selection, nbOfPoints);
     rangeStart = rangeEnd;
   }
 

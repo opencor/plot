@@ -50,6 +50,12 @@ const selectedIndices = (selection: ISelection | undefined): number[] => {
   return selection ? Array.from(selection.indices.subarray(0, selection.nbOfPoints)) : [];
 };
 
+const isFinitePoint = (xValues: Float64Array, yValues: Float64Array, index: number): boolean => {
+  // Return whether the given point is finite, i.e. whether both its X and Y values are finite.
+
+  return Number.isFinite(xValues[index] as number) && Number.isFinite(yValues[index] as number);
+};
+
 const checkSelection = (
   xValues: Float64Array,
   yValues: Float64Array,
@@ -65,7 +71,7 @@ const checkSelection = (
   // has up to four of them. Otherwise, for each run of finite points of that range, its first and last points, as well
   // as points with its minimum and maximum Y values, and no more than four points in total, are selected (with the
   // first point of a run that follows a gap being selected on its own, and the rest of the run being selected that
-  // way), and for each gap of that range, its first point is selected.
+  // way), and for each gap of that range (i.e. points with a non-finite X or Y value), its first point is selected.
   // Note: we determine our ranges of points and their runs in a brute-force way, i.e. without relying on
   //       levelOfDetailUtils.ts.
 
@@ -86,10 +92,19 @@ const checkSelection = (
     if (k > nbOfColumns) {
       rangeEnd = end;
     } else {
+      // Our range ends after the last finite point that is before our boundary (i.e. the gaps that follow it are in
+      // the next range).
+
       const boundary = k === nbOfColumns ? xMax : xMin + k * columnWidth;
 
-      while (rangeEnd < end && (xValues[rangeEnd] as number) < boundary) {
-        ++rangeEnd;
+      for (let i = rangeStart; i < end; ++i) {
+        if (isFinitePoint(xValues, yValues, i)) {
+          if ((xValues[i] as number) >= boundary) {
+            break;
+          }
+
+          rangeEnd = i + 1;
+        }
       }
     }
 
@@ -110,10 +125,10 @@ const checkSelection = (
       let nbOfRunIndices = 0;
 
       for (let runStart = rangeStart; runStart < rangeEnd; ) {
-        const finite = Number.isFinite(yValues[runStart] as number);
+        const finite = isFinitePoint(xValues, yValues, runStart);
         let runEnd = runStart + 1;
 
-        while (runEnd < rangeEnd && Number.isFinite(yValues[runEnd] as number) === finite) {
+        while (runEnd < rangeEnd && isFinitePoint(xValues, yValues, runEnd) === finite) {
           ++runEnd;
         }
 
@@ -126,7 +141,7 @@ const checkSelection = (
 
           let checkedRunStart = runStart;
 
-          if (runStart > 0 && !Number.isFinite(yValues[runStart - 1] as number) && runEnd - runStart > 1) {
+          if (runStart > 0 && !isFinitePoint(xValues, yValues, runStart - 1) && runEnd - runStart > 1) {
             expect(runIndices[0]).toBe(runStart);
 
             runIndices = runIndices.slice(1);
@@ -159,14 +174,31 @@ const checkSelection = (
   expect(index).toBe(indices.length);
 };
 
+const randomGap = (random: () => number, xValues: Float64Array, yValues: Float64Array, index: number): void => {
+  // Make the given point a gap, i.e. give it a non-finite Y value (with or without an X value that is not sorted) or a
+  // non-finite X value.
+
+  const GAPS = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
+  const gap = GAPS[Math.floor(3 * random())] as number;
+  const kind = random();
+
+  if (kind < 0.4) {
+    yValues[index] = gap;
+  } else if (kind < 0.6) {
+    xValues[index] = -1000 * random();
+    yValues[index] = gap;
+  } else {
+    xValues[index] = gap;
+  }
+};
+
 const randomPoints = (random: () => number, nbOfPoints: number, gaps = false): [Float64Array, Float64Array] => {
   // Return some random points, with sorted X values (some of which are the same) and random Y values, some of which
-  // may be gaps (i.e. NaN or infinite values), either isolated ones or runs of them (of up to 1,000 points, so that
-  // some blocks have no finite points, while other blocks have no gap).
+  // may be gaps (see randomGap()), either isolated ones or runs of them (of up to 1,000 points, so that some blocks
+  // have no finite points, while other blocks have no gap).
 
   const xValues = new Float64Array(nbOfPoints);
   const yValues = new Float64Array(nbOfPoints);
-  const GAPS = [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY];
   let x = 0;
   let gapLength = 0;
 
@@ -184,14 +216,32 @@ const randomPoints = (random: () => number, nbOfPoints: number, gaps = false): [
       if (gapLength > 0) {
         --gapLength;
 
-        yValues[i] = Number.NaN;
+        randomGap(random, xValues, yValues, i);
       } else if (random() < 0.02) {
-        yValues[i] = GAPS[Math.floor(3 * random())] as number;
+        randomGap(random, xValues, yValues, i);
       }
     }
   }
 
   return [xValues, yValues];
+};
+
+const sortedLengthOf = (xValues: Float64Array, yValues: Float64Array, count: number): number => {
+  // Return the number of leading points whose finite points have sorted X values, in a brute-force way.
+
+  let previous = Number.NEGATIVE_INFINITY;
+
+  for (let i = 0; i < count; ++i) {
+    if (isFinitePoint(xValues, yValues, i)) {
+      if ((xValues[i] as number) < previous) {
+        return i;
+      }
+
+      previous = xValues[i] as number;
+    }
+  }
+
+  return count;
 };
 
 // create().
@@ -233,17 +283,81 @@ describe('memoryUsage()', () => {
 // update().
 
 describe('update()', () => {
-  const sortedLength = (xValues: number[]): number => {
-    return levelOfDetail(Float64Array.from(xValues), new Float64Array(xValues.length)).sortedLength;
+  const sortedLength = (xValues: number[], yValues: number[] = new Array(xValues.length).fill(0)): number => {
+    return levelOfDetail(Float64Array.from(xValues), Float64Array.from(yValues)).sortedLength;
   };
 
-  it('determines how many leading points have finite X values that are sorted', () => {
+  it('determines how many leading points have sorted X values for their finite points', () => {
     expect(sortedLength([])).toBe(0);
     expect(sortedLength([1, 2, 2, 3])).toBe(4);
     expect(sortedLength([1, 3, 2, 4])).toBe(2);
-    expect(sortedLength([1, Number.NaN, 3])).toBe(1);
-    expect(sortedLength([Number.NEGATIVE_INFINITY, 1])).toBe(0);
-    expect(sortedLength([1, Number.POSITIVE_INFINITY])).toBe(1);
+
+    // Gaps are skipped, whether they have a non-finite X value or a non-finite Y value (in which case their X value
+    // doesn't matter).
+
+    expect(sortedLength([1, Number.NaN, 3])).toBe(3);
+    expect(sortedLength([Number.NEGATIVE_INFINITY, 1])).toBe(2);
+    expect(sortedLength([1, Number.POSITIVE_INFINITY])).toBe(2);
+    expect(sortedLength([1, Number.NaN, 0])).toBe(2);
+    expect(sortedLength([1, 0, 2], [0, Number.NaN, 0])).toBe(3);
+    expect(sortedLength([1, 0, 2], [0, 0, Number.NaN])).toBe(1);
+
+    // Same, for some random points (with many gaps), and for those points with some unsorted X values.
+
+    const random = randomGenerator(789);
+
+    for (let run = 0; run < 20; ++run) {
+      const nbOfPoints = 1 + Math.floor(10000 * random());
+      const [xValues, yValues] = randomPoints(random, nbOfPoints, true);
+
+      if (run % 2) {
+        xValues[Math.floor(nbOfPoints * random())] = -1;
+      }
+
+      expect(levelOfDetail(xValues, yValues).sortedLength).toBe(sortedLengthOf(xValues, yValues, nbOfPoints));
+    }
+  });
+
+  it('carries on from the last finite point that it has already processed', () => {
+    // Our points have a gap of 1,000 points (i.e. whole blocks of points without a finite point), after which our
+    // points must still be sorted, so it needs to retrieve the last finite point before it.
+
+    const nbOfPoints = 2000;
+    const xValues = Float64Array.from({ length: nbOfPoints }, (_value, i) => (i >= 500 && i < 1500 ? Number.NaN : i));
+    const yValues = new Float64Array(nbOfPoints);
+    const lod = levelOfDetail(xValues, yValues, 1200);
+
+    expect(lod.sortedLength).toBe(1200);
+
+    xValues[1500] = 499;
+
+    update(lod, xValues, yValues, nbOfPoints);
+
+    expect(lod.sortedLength).toBe(nbOfPoints);
+
+    xValues[1500] = 498;
+
+    invalidate(lod, 1200);
+    update(lod, xValues, yValues, nbOfPoints);
+
+    expect(lod.sortedLength).toBe(1500);
+  });
+
+  it('drops the blocks that it no longer needs', () => {
+    const xValues = Float64Array.from({ length: 1000 }, (_value, i) => i);
+    const lod = levelOfDetail(xValues, xValues);
+
+    expect(lod.levels.length).toBe(2);
+
+    invalidate(lod, 0);
+    update(lod, xValues, xValues, 100);
+
+    expect(lod.levels.length).toBe(1);
+
+    invalidate(lod, 0);
+    update(lod, xValues, xValues, 10);
+
+    expect(lod.levels.length).toBe(0);
   });
 
   it('carries on from the points that it has already processed', () => {
@@ -338,26 +452,55 @@ describe('invalidate()', () => {
 // visibleRange().
 
 describe('visibleRange()', () => {
-  const xValues = Float64Array.from([0, 1, 2, 3, 4, 5]);
+  const range = (
+    xValues: number[],
+    count: number,
+    xMin: number,
+    xMax: number,
+    yValues: number[] = new Array(xValues.length).fill(0)
+  ): [number, number] => {
+    const xs = Float64Array.from(xValues);
+    const ys = Float64Array.from(yValues);
+
+    return visibleRange(levelOfDetail(xs, ys, count), xs, ys, count, xMin, xMax);
+  };
+  const xValues = [0, 1, 2, 3, 4, 5];
 
   it('returns the points within the given X range, as well as the points just before and after it', () => {
-    expect(visibleRange(xValues, 6, 1.5, 3.5)).toEqual([1, 5]);
-    expect(visibleRange(xValues, 6, 1, 3)).toEqual([0, 5]);
-    expect(visibleRange(xValues, 6, 0, 5)).toEqual([0, 6]);
-    expect(visibleRange(xValues, 6, -10, 10)).toEqual([0, 6]);
+    expect(range(xValues, 6, 1.5, 3.5)).toEqual([1, 5]);
+    expect(range(xValues, 6, 1, 3)).toEqual([0, 5]);
+    expect(range(xValues, 6, 0, 5)).toEqual([0, 6]);
+    expect(range(xValues, 6, -10, 10)).toEqual([0, 6]);
   });
 
   it('handles an X range that is before or after all the points', () => {
-    expect(visibleRange(xValues, 6, -5, -1)).toEqual([0, 1]);
-    expect(visibleRange(xValues, 6, 10, 20)).toEqual([5, 6]);
+    expect(range(xValues, 6, -5, -1)).toEqual([0, 1]);
+    expect(range(xValues, 6, 10, 20)).toEqual([5, 6]);
   });
 
   it('only considers the given number of points', () => {
-    expect(visibleRange(xValues, 3, 0, 10)).toEqual([0, 3]);
+    expect(range(xValues, 3, 0, 10)).toEqual([0, 3]);
   });
 
   it('handles points with the same X value', () => {
-    expect(visibleRange(Float64Array.from([0, 1, 1, 1, 2]), 5, 1, 1)).toEqual([0, 5]);
+    expect(range([0, 1, 1, 1, 2], 5, 1, 1)).toEqual([0, 5]);
+  });
+
+  it('skips gaps, whatever their X value', () => {
+    const N = Number.NaN;
+
+    // Our last finite point before our X range is point 1 (since point 3 is a gap, whatever its X value), and our last
+    // finite point within our X range is point 6, which is followed by a gap (point 7).
+
+    expect(range([0, 1, N, 9, 3, N, 5, N, -1, 7, 8], 11, 3, 6, [0, 0, 0, N, 0, 0, 0, 0, N, 0, 0])).toEqual([1, 8]);
+
+    // Our only finite point is within our X range, and it is followed by some gaps, the first of which is in our range.
+
+    expect(range([N, N, 4, N, N], 5, 3, 6)).toEqual([0, 4]);
+
+    // We have no finite point.
+
+    expect(range([N, N, N], 3, 3, 6)).toEqual([0, 1]);
   });
 });
 
@@ -394,13 +537,13 @@ describe('selectPoints()', () => {
     ])) {
       const [xValues, yValues] = randomPoints(random, nbOfPoints, gaps);
       const lod = levelOfDetail(xValues, yValues);
-      const xLast = xValues[nbOfPoints - 1] as number;
+      const xLast = xValues.reduce((max, x) => (Number.isFinite(x) ? Math.max(max, x) : max), 0);
 
       for (let run = 0; run < 20; ++run) {
         const xMin = xLast * (1.2 * random() - 0.1);
         const xMax = xMin + xLast * (0.01 + random());
         const nbOfColumns = 1 + Math.floor(300 * random());
-        const [start, end] = visibleRange(xValues, nbOfPoints, xMin, xMax);
+        const [start, end] = visibleRange(lod, xValues, yValues, nbOfPoints, xMin, xMax);
         const selection = selectPoints(lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
 
         checkSelection(xValues, yValues, start, end, xMin, xMax, nbOfColumns, selection);
@@ -484,6 +627,19 @@ describe('selectPoints()', () => {
     expect(selectedIndices(selectPoints(levelOfDetail(xValues, yValues), xValues, yValues, 0, 13, 20, 30, 1))).toEqual([
       0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 12
     ]);
+
+    // Same with gaps that are due to a non-finite X value, or to a non-finite Y value but with an X value that is not
+    // sorted.
+
+    xValues[4] = Number.NaN;
+    xValues[5] = -5;
+    xValues[7] = Number.POSITIVE_INFINITY;
+    yValues[4] = 1;
+    yValues[7] = 2;
+
+    expect(selectedIndices(selectPoints(levelOfDetail(xValues, yValues), xValues, yValues, 0, 13, 20, 30, 1))).toEqual([
+      0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 12
+    ]);
   });
 
   it('grows its selection if needed', () => {
@@ -535,14 +691,20 @@ describe('selectPoints()', () => {
 
       while (count < NB_OF_POINTS) {
         const newCount = Math.min(NB_OF_POINTS, count + 1 + Math.floor(50 * random()));
+        const gapBatch = gaps && random() < 0.2;
 
         if (count > 0 && random() < 0.5) {
+          xValues[count - 1] = 0.1 * (count - 1);
           yValues[count - 1] = random();
         }
 
         for (let i = count; i < newCount; ++i) {
           xValues[i] = 0.1 * i;
-          yValues[i] = gaps && random() < 0.1 ? Number.NaN : random();
+          yValues[i] = random();
+
+          if (gapBatch || (gaps && random() < 0.1)) {
+            randomGap(random, xValues, yValues, i);
+          }
         }
 
         invalidate(lod, Math.max(0, count - 1));
@@ -550,8 +712,10 @@ describe('selectPoints()', () => {
 
         count = newCount;
 
+        expect(lod.sortedLength).toBe(count);
+
         const previousIndices = selectedIndices(lod.selection);
-        const [start, end] = visibleRange(xValues, count, 0, X_MAX);
+        const [start, end] = visibleRange(lod, xValues, yValues, count, 0, X_MAX);
         const selection = selectPoints(lod, xValues, yValues, start, end, 0, X_MAX, NB_OF_COLUMNS);
         const fromScratch = selectPoints(
           levelOfDetail(xValues.slice(0, count), yValues.slice(0, count)),

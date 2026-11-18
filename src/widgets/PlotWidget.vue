@@ -4443,7 +4443,7 @@ const linearPathPoints = (
     return res;
   }
 
-  const [start, end] = levelOfDetailUtils.visibleRange(xValues, count, area.xMin, area.xMax);
+  const [start, end] = levelOfDetailUtils.visibleRange(trace.lod, xValues, yValues, count, area.xMin, area.xMax);
 
   res.index0 = start;
   res.index1 = end - 1;

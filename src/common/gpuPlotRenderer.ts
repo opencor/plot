@@ -706,9 +706,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         from = 0;
       }
 
-      // Convert and upload our (changed) selected points, which X values are all finite (since they are sorted), but
-      // which Y values may not be (i.e. our selection may include gaps, see Note #4 of levelOfDetailUtils.ts), in which
-      // case they get uploaded as gaps (see Note #6 above).
+      // Convert and upload our (changed) selected points, some of which may be gaps (see Note #4 and Note #8 of
+      // levelOfDetailUtils.ts), in which case they get uploaded as such (see Note #6 above).
 
       const nbOfValues = 2 * (selection.nbOfPoints - from);
 
@@ -724,10 +723,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
         for (let i = from, j = 0; i < selection.nbOfPoints; ++i, j += 2) {
           const index = indices[i] as number;
+          const x = xs[index] as number;
           const y = ys[index] as number;
 
-          if (y - y === 0) {
-            values[j] = (xs[index] as number) - xOrigin;
+          if (x - x === 0 && y - y === 0) {
+            values[j] = x - xOrigin;
             values[j + 1] = y - yOrigin;
           } else {
             values[j] = GAP_VALUE;
@@ -770,7 +770,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         return res;
       }
 
-      [res.start, res.end] = levelOfDetailUtils.visibleRange(xValues, count, area.xMin, area.xMax);
+      [res.start, res.end] = levelOfDetailUtils.visibleRange(lod, xValues, yValues, count, area.xMin, area.xMax);
 
       res.lineStart = res.start;
       res.lineEnd = res.end;
