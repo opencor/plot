@@ -5024,7 +5024,7 @@ const actualValue = (axisKey: AxisKey, value: number): number => {
 };
 
 // The values that we plot for our traces, i.e. their actual values or, along a logarithmic axis, their decimal
-// logarithm, as well as the statistics of those values (i.e. their range and whether they are sorted).
+// logarithm, as well as the statistics of those values (i.e. their range).
 // Note #1: our data gets updated whenever new data is given to us (e.g., many times a second while a simulation is
 //          running), typically with a few more values each time, so we process our values incrementally (see
 //          traceValues.ts), i.e. updating a trace with N new values costs O(N) rather than O(number of values).

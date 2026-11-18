@@ -15,7 +15,7 @@ export const isContinuationOf = (values: Float64Array, previousValues: Float64Ar
   );
 };
 
-// The statistics of some values, i.e. the range of their finite values and whether they are sorted in increasing order.
+// The statistics of some values, i.e. the range of their finite values.
 // Note #1: we ignore non-finite values (rather than let uPlot determine the range of our data) since a NaN value would
 //          make our range NaN (e.g., if a trace starts with a NaN value, uPlot never moves away from it).
 // Note #2: if some values are a continuation of the previous ones, then we only need to look at their new values (and
@@ -32,59 +32,21 @@ export interface IValuesStatistics {
   prefixLength: number; // Number of values (i.e. all but the last one) covered by our prefix statistics.
   prefixMin: number; // Minimum of the finite values of our prefix (+Infinity if there are none).
   prefixMax: number; // Maximum of the finite values of our prefix (-Infinity if there are none).
-  prefixSortedLength: number; // Number of leading values (within our prefix) that are sorted in increasing order.
   min: number; // Minimum of our finite values (+Infinity if there are none).
   max: number; // Maximum of our finite values (-Infinity if there are none).
-  sorted: boolean; // Whether all of our values are sorted in increasing order (false if one of several values is NaN).
 }
 
-const scanValues = (
-  values: Float64Array,
-  start: number,
-  end: number,
-  sortedLength: number
-): [min: number, max: number, sortedLength: number] => {
-  // Return the minimum and maximum of the given (finite) values between the given start (included) and end (excluded),
-  // and the number of leading values that are sorted in increasing order, given the number of leading values (before
-  // our start) that we already know are sorted.
-  // Note: we negate our comparison so that NaN values (for which all comparisons are false) mean unsorted values.
+const scanValues = (values: Float64Array, start: number, end: number): [min: number, max: number] => {
+  // Return the minimum and maximum of the given (finite) values between the given start (included) and end (excluded).
 
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
-  let newSortedLength = sortedLength;
-  let sorting = sortedLength === start;
-  let previous = start > 0 ? (values[start - 1] as number) : Number.NaN;
-  let i = start;
 
-  if (i === 0 && i < end) {
-    // Our first value is always sorted.
-
-    previous = values[0] as number;
-    min = previous;
-    max = previous;
-
-    if (sorting) {
-      newSortedLength = 1;
-    }
-
-    ++i;
-  }
-
-  for (; i < end; ++i) {
+  for (let i = start; i < end; ++i) {
     const value = values[i] as number;
 
     min = Math.min(min, value);
     max = Math.max(max, value);
-
-    if (sorting) {
-      if (value >= previous) {
-        newSortedLength = i + 1;
-      } else {
-        sorting = false;
-      }
-    }
-
-    previous = value;
   }
 
   // If our minimum or maximum is not finite, then some of our values are not finite, so determine our minimum and
@@ -95,8 +57,8 @@ const scanValues = (
     min = Number.POSITIVE_INFINITY;
     max = Number.NEGATIVE_INFINITY;
 
-    for (let j = start; j < end; ++j) {
-      const value = values[j] as number;
+    for (let i = start; i < end; ++i) {
+      const value = values[i] as number;
 
       if (Number.isFinite(value)) {
         if (value < min) {
@@ -110,7 +72,7 @@ const scanValues = (
     }
   }
 
-  return [min, max, newSortedLength];
+  return [min, max];
 };
 
 export const valuesStatistics = (values: Float64Array, previous?: IValuesStatistics): IValuesStatistics => {
@@ -122,31 +84,27 @@ export const valuesStatistics = (values: Float64Array, previous?: IValuesStatist
   const start = continuation ? previous.prefixLength : 0;
   let prefixMin = continuation ? previous.prefixMin : Number.POSITIVE_INFINITY;
   let prefixMax = continuation ? previous.prefixMax : Number.NEGATIVE_INFINITY;
-  let prefixSortedLength = continuation ? previous.prefixSortedLength : 0;
 
   // Process the values of our prefix that we haven't already processed.
 
   if (start < prefixLength) {
-    const [min, max, sortedLength] = scanValues(values, start, prefixLength, prefixSortedLength);
+    const [min, max] = scanValues(values, start, prefixLength);
 
     prefixMin = Math.min(prefixMin, min);
     prefixMax = Math.max(prefixMax, max);
-    prefixSortedLength = sortedLength;
   }
 
   // Take our last value into account.
 
-  const [lastMin, lastMax, sortedLength] = scanValues(values, prefixLength, length, prefixSortedLength);
+  const [lastMin, lastMax] = scanValues(values, prefixLength, length);
 
   return {
     values,
     prefixLength,
     prefixMin,
     prefixMax,
-    prefixSortedLength,
     min: Math.min(prefixMin, lastMin),
-    max: Math.max(prefixMax, lastMax),
-    sorted: sortedLength === length
+    max: Math.max(prefixMax, lastMax)
   };
 };
 

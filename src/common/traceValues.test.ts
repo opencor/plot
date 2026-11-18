@@ -10,12 +10,12 @@ const view = (buffer: Float64Array, length: number, offset: number = 0): Float64
   return buffer.subarray(offset, offset + length);
 };
 
-const statistics = (values: number[]): Pick<IValuesStatistics, 'min' | 'max' | 'sorted'> => {
+const statistics = (values: number[]): Pick<IValuesStatistics, 'min' | 'max'> => {
   // Return the statistics that matter of the given values.
 
-  const { min, max, sorted } = valuesStatistics(Float64Array.from(values));
+  const { min, max } = valuesStatistics(Float64Array.from(values));
 
-  return { min, max, sorted };
+  return { min, max };
 };
 
 const randomGenerator = (seed: number): (() => number) => {
@@ -73,23 +73,19 @@ describe('isContinuationOf()', () => {
 
 describe('valuesStatistics()', () => {
   it('handles no values', () => {
-    expect(statistics([])).toEqual({
-      min: Number.POSITIVE_INFINITY,
-      max: Number.NEGATIVE_INFINITY,
-      sorted: true
-    });
+    expect(statistics([])).toEqual({ min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY });
   });
 
   it('handles one value', () => {
-    expect(statistics([3])).toEqual({ min: 3, max: 3, sorted: true });
+    expect(statistics([3])).toEqual({ min: 3, max: 3 });
   });
 
-  it('determines the range of some values and whether they are sorted', () => {
-    expect(statistics([1, 2, 3, 4])).toEqual({ min: 1, max: 4, sorted: true });
-    expect(statistics([1, 1, 2, 2])).toEqual({ min: 1, max: 2, sorted: true });
-    expect(statistics([1, 3, 2, 4])).toEqual({ min: 1, max: 4, sorted: false });
-    expect(statistics([4, 3, 2, 1])).toEqual({ min: 1, max: 4, sorted: false });
-    expect(statistics([-5, 0, 7.5])).toEqual({ min: -5, max: 7.5, sorted: true });
+  it('determines the range of some values', () => {
+    expect(statistics([1, 2, 3, 4])).toEqual({ min: 1, max: 4 });
+    expect(statistics([1, 1, 2, 2])).toEqual({ min: 1, max: 2 });
+    expect(statistics([1, 3, 2, 4])).toEqual({ min: 1, max: 4 });
+    expect(statistics([4, 3, 2, 1])).toEqual({ min: 1, max: 4 });
+    expect(statistics([-5, 0, 7.5])).toEqual({ min: -5, max: 7.5 });
   });
 
   it('ignores non-finite values when determining the range of some values', () => {
@@ -106,28 +102,11 @@ describe('valuesStatistics()', () => {
     });
   });
 
-  it('considers one value as sorted, even if it is NaN', () => {
-    // Note: a value can only be out of order with respect to another value.
-
-    expect(statistics([Number.NaN])).toMatchObject({ sorted: true });
-  });
-
-  it('considers NaN values as unsorted', () => {
-    expect(statistics([1, Number.NaN, 3])).toMatchObject({ sorted: false });
-    expect(statistics([1, 2, Number.NaN])).toMatchObject({ sorted: false });
-    expect(statistics([Number.NaN, 2, 3])).toMatchObject({ sorted: false });
-  });
-
-  it('considers infinities as sorted when they are in increasing order', () => {
-    expect(statistics([Number.NEGATIVE_INFINITY, 1, Number.POSITIVE_INFINITY])).toMatchObject({ sorted: true });
-    expect(statistics([Number.POSITIVE_INFINITY, 1])).toMatchObject({ sorted: false });
-  });
-
   it('carries on from the statistics of some previous values, if some values are a continuation of them', () => {
     const buffer = new Float64Array([1, 2, 3, 4, 5, 6]);
     const previous = valuesStatistics(view(buffer, 3));
 
-    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 6, sorted: true });
+    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 6 });
   });
 
   it('takes into account the last of some previous values having changed', () => {
@@ -136,11 +115,11 @@ describe('valuesStatistics()', () => {
 
     buffer[2] = 9;
 
-    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 9, sorted: false });
+    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 9 });
 
     buffer[2] = -9;
 
-    expect(valuesStatistics(view(buffer, 3), previous)).toMatchObject({ min: -9, max: 2, sorted: false });
+    expect(valuesStatistics(view(buffer, 3), previous)).toMatchObject({ min: -9, max: 2 });
   });
 
   it('only processes the new values (and the last of the previous values) of a continuation', () => {
@@ -152,7 +131,7 @@ describe('valuesStatistics()', () => {
 
     buffer[0] = 100;
 
-    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 6, sorted: true });
+    expect(valuesStatistics(view(buffer, 6), previous)).toMatchObject({ min: 1, max: 6 });
   });
 
   it('processes all the values again if they are not a continuation of the previous ones', () => {
@@ -162,8 +141,8 @@ describe('valuesStatistics()', () => {
 
     otherBuffer[0] = 100;
 
-    expect(valuesStatistics(view(otherBuffer, 6), previous)).toMatchObject({ min: 2, max: 100, sorted: false });
-    expect(valuesStatistics(view(buffer, 1), previous)).toMatchObject({ min: 1, max: 1, sorted: true });
+    expect(valuesStatistics(view(otherBuffer, 6), previous)).toMatchObject({ min: 2, max: 100 });
+    expect(valuesStatistics(view(buffer, 1), previous)).toMatchObject({ min: 1, max: 1 });
   });
 
   it('gives the same results incrementally as from scratch', () => {
@@ -184,7 +163,7 @@ describe('valuesStatistics()', () => {
           return SPECIAL_VALUES[Math.floor(3 * random())] as number;
         }
 
-        // Mostly increasing values, but not always (so that some of our runs are sorted and some are not).
+        // Mostly increasing values, but not always.
 
         return run % 2 ? index + (r < 0.05 ? -10 : 0) : index + 10 * r;
       };
@@ -208,11 +187,7 @@ describe('valuesStatistics()', () => {
         const incremental = valuesStatistics(values, previous);
         const fromScratch = valuesStatistics(Float64Array.from(values));
 
-        expect({ min: incremental.min, max: incremental.max, sorted: incremental.sorted }).toEqual({
-          min: fromScratch.min,
-          max: fromScratch.max,
-          sorted: fromScratch.sorted
-        });
+        expect({ min: incremental.min, max: incremental.max }).toEqual({ min: fromScratch.min, max: fromScratch.max });
 
         previous = incremental;
       }
