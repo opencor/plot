@@ -6,6 +6,7 @@ import {
   type ISelection,
   invalidate,
   memoryUsage,
+  neighbouringPoints,
   selectPoints,
   update,
   visibleRange
@@ -501,6 +502,59 @@ describe('visibleRange()', () => {
     // We have no finite point.
 
     expect(range([N, N, N], 3, 3, 6)).toEqual([0, 1]);
+  });
+});
+
+// neighbouringPoints().
+
+describe('neighbouringPoints()', () => {
+  it('returns the finite points on either side of the given X value, skipping gaps', () => {
+    const N = Number.NaN;
+    const xValues = Float64Array.from([N, 1, 2, -9, N, 5, 5, 6, N]);
+    const yValues = Float64Array.from([0, 0, 0, N, 0, 0, 0, 0, 0]);
+    const lod = levelOfDetail(xValues, yValues);
+    const neighbours = (x: number): [number, number] => neighbouringPoints(lod, xValues, yValues, 9, x);
+
+    // Points 3 and 4 are gaps (whatever their X value), and so are points 0 and 8.
+
+    expect(neighbours(0)).toEqual([-1, 1]);
+    expect(neighbours(1)).toEqual([-1, 1]);
+    expect(neighbours(1.5)).toEqual([1, 2]);
+    expect(neighbours(3)).toEqual([2, 5]);
+    expect(neighbours(5)).toEqual([2, 5]);
+    expect(neighbours(5.5)).toEqual([6, 7]);
+    expect(neighbours(7)).toEqual([7, 9]);
+  });
+
+  it('returns the same finite points as a brute-force search, for some random points with or without gaps', () => {
+    const random = randomGenerator(321);
+
+    for (const gaps of [false, true]) {
+      const nbOfPoints = 50000;
+      const [xValues, yValues] = randomPoints(random, nbOfPoints, gaps);
+      const lod = levelOfDetail(xValues, yValues);
+      const xLast = xValues.reduce((max, x) => (Number.isFinite(x) ? Math.max(max, x) : max), 0);
+
+      for (let run = 0; run < 200; ++run) {
+        const x = xLast * (1.2 * random() - 0.1);
+        let before = -1;
+        let after = nbOfPoints;
+
+        for (let i = 0; i < nbOfPoints; ++i) {
+          if (isFinitePoint(xValues, yValues, i)) {
+            if ((xValues[i] as number) < x) {
+              before = i;
+            } else {
+              after = i;
+
+              break;
+            }
+          }
+        }
+
+        expect(neighbouringPoints(lod, xValues, yValues, nbOfPoints, x)).toEqual([before, after]);
+      }
+    }
   });
 });
 

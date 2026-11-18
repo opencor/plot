@@ -561,6 +561,26 @@ export const visibleRange = (
   return [Math.max(0, start - 1), Math.min(count, end + 1)];
 };
 
+export const neighbouringPoints = (
+  lod: ILevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  count: number,
+  x: number
+): [before: number, after: number] => {
+  // Return the index of the last finite point, of the given points (whose finite points must have sorted X values, see
+  // Note #8 above), that has an X value less than the given X value (or -1 if there is none), and the index of the
+  // first finite point that has an X value not less than it (or the given number of points if there is none), e.g. so
+  // that we can determine the point that gets hovered.
+  // Note #1: our level of detail must be up to date (see update()).
+  // Note #2: lowerBound() returns the point after the last finite point that has an X value less than the given X value
+  //          (or our first point if there is none).
+
+  const index = lowerBound(lod, xValues, yValues, 0, count, x);
+
+  return [index - 1, skipBlocks(lod, xValues, yValues, index, count, false)];
+};
+
 const maxNbOfSelectedPoints = (nbOfColumns: number): number => {
   // Return the maximum number of points that selectPoints() may select for the given number of columns, if our points
   // have no gap (see Note #4 above).

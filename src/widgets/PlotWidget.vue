@@ -4362,16 +4362,16 @@ const linearPath = (
 // Note #2: our columns are our pixel columns (i.e. those of linearPath()), so our selected points include all the
 //          points that linearPath() would draw, i.e. our trace looks exactly the same.
 // Note #3: like our GPU plot renderer, we keep our level of detail up to date incrementally (see traceValues.ts).
-// Note #4: the level of detail of a trace is shared with our GPU plot renderer (see gpuFrameItemsOf()), so that it
-//          doesn't need its own (and therefore twice as much memory). Each of them invalidates it from the first point
-//          that may have changed since it last used it, which is safe since invalidating it from an earlier point than
-//          needed only means that a few more points get processed again.
+// Note #4: the level of detail of a trace is shared with our GPU plot renderer (see gpuFrameItemsOf()) and our hover
+//          (see hoveredIndex()), so that they don't need their own (and therefore more memory). Each of them
+//          invalidates it from the first point that may have changed since it last used it (see updatedTraceLod()),
+//          which is safe since invalidating it from an earlier point than needed only means that a few more points get
+//          processed again.
 
-interface ICanvasTrace {
-  xValues: Float64Array | undefined; // X values for which our level of detail was last updated.
-  yValues: Float64Array | undefined; // Y values for which our level of detail was last updated.
-  count: number; // Number of points for which our level of detail was last updated.
-  lod: levelOfDetailUtils.ILevelOfDetail; // Our level of detail.
+interface ILodUse {
+  xValues: Float64Array | undefined; // X values for which a level of detail was last updated by its user.
+  yValues: Float64Array | undefined; // Y values for which a level of detail was last updated by its user.
+  count: number; // Number of points for which a level of detail was last updated by its user.
 }
 
 interface ILinearPathPoints {
@@ -4382,7 +4382,8 @@ interface ILinearPathPoints {
 }
 
 let traceLods: levelOfDetailUtils.ILevelOfDetail[] = [];
-let canvasTraces: ICanvasTrace[] = [];
+let canvasLodUses: ILodUse[] = [];
+let hoverLodUses: ILodUse[] = [];
 
 const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
   // Return the level of detail of the given trace, creating it if needed (see Note #4 above).
@@ -4390,6 +4391,35 @@ const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
   traceLods[traceIndex] ??= levelOfDetailUtils.create();
 
   return traceLods[traceIndex];
+};
+
+const updatedTraceLod = (
+  uses: ILodUse[],
+  traceIndex: number,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  count: number
+): levelOfDetailUtils.ILevelOfDetail => {
+  // Return the level of detail of the given trace, once updated for the given points by the user whose uses are given,
+  // i.e. from the first point that may have changed since that user last used it (see Note #4 above).
+
+  uses[traceIndex] ??= { xValues: undefined, yValues: undefined, count: 0 };
+
+  const use = uses[traceIndex] as ILodUse;
+  const lod = traceLod(traceIndex);
+  const from =
+    use.count > 0 && isContinuationOf(xValues, use.xValues) && isContinuationOf(yValues, use.yValues)
+      ? Math.min(use.count - 1, count)
+      : 0;
+
+  levelOfDetailUtils.invalidate(lod, from);
+  levelOfDetailUtils.update(lod, xValues, yValues, count);
+
+  use.xValues = xValues;
+  use.yValues = yValues;
+  use.count = count;
+
+  return lod;
 };
 let canvasSelectionXValues = new Float64Array(0);
 let canvasSelectionYValues = new Float64Array(0);
@@ -4417,33 +4447,15 @@ const linearPathPoints = (
 
   // Update our level of detail, from the first point that may have changed.
 
-  canvasTraces[seriesIndex - 1] ??= {
-    xValues: undefined,
-    yValues: undefined,
-    count: 0,
-    lod: traceLod(seriesIndex - 1)
-  };
-
-  const trace = canvasTraces[seriesIndex - 1] as ICanvasTrace;
-  const from =
-    trace.count > 0 && isContinuationOf(xValues, trace.xValues) && isContinuationOf(yValues, trace.yValues)
-      ? Math.min(trace.count - 1, count)
-      : 0;
-
-  levelOfDetailUtils.invalidate(trace.lod, from);
-  levelOfDetailUtils.update(trace.lod, xValues, yValues, count);
-
-  trace.xValues = xValues;
-  trace.yValues = yValues;
-  trace.count = count;
+  const lod = updatedTraceLod(canvasLodUses, seriesIndex - 1, xValues, yValues, count);
 
   // Only go through our visible points, if our X values are sorted.
 
-  if (trace.lod.sortedLength < count) {
+  if (lod.sortedLength < count) {
     return res;
   }
 
-  const [start, end] = levelOfDetailUtils.visibleRange(trace.lod, xValues, yValues, count, area.xMin, area.xMax);
+  const [start, end] = levelOfDetailUtils.visibleRange(lod, xValues, yValues, count, area.xMin, area.xMax);
 
   res.index0 = start;
   res.index1 = end - 1;
@@ -4458,7 +4470,7 @@ const linearPathPoints = (
 
   const xMin = area.xMin + (Math.round(area.left) - 0.5 - area.left) / xFactor;
   const xMax = xMin + nbOfColumns / xFactor;
-  const selection = levelOfDetailUtils.selectPoints(trace.lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
+  const selection = levelOfDetailUtils.selectPoints(lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
 
   if (canvasSelectionXValues.length < selection.nbOfPoints) {
     canvasSelectionXValues = new Float64Array(selection.indices.length);
@@ -4629,7 +4641,8 @@ const prepareFrame = (u: uPlot): void => {
 
   disposeGpuTraces(props.renderer === 'canvas' ? 0 : u.series.length - 1);
 
-  canvasTraces = canvasTraces.slice(0, u.series.length - 1);
+  canvasLodUses = canvasLodUses.slice(0, u.series.length - 1);
+  hoverLodUses = hoverLodUses.slice(0, u.series.length - 1);
   traceLods = traceLods.slice(0, u.series.length - 1);
 
   if (props.renderer !== 'canvas') {
@@ -4736,27 +4749,6 @@ interface IHover {
 
 const hover = vue.shallowRef<IHover | null>(null);
 let hoverRafId: number | undefined;
-let sortedXValues: boolean[] = [];
-
-const lowerBound = (values: Float64Array, value: number, end: number): number => {
-  // Return the index of the first of the given (sorted) values (up to the given end index) that is not less than the
-  // given value, or the given end index if there is none.
-
-  let low = 0;
-  let high = end;
-
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-
-    if ((values[middle] as number) < value) {
-      low = middle + 1;
-    } else {
-      high = middle;
-    }
-  }
-
-  return low;
-};
 
 const formatHoverValue = (value: number): string => {
   // Like Plotly, format a value in our hover tooltip using the value itself as the tick spacing and adding four digits
@@ -4772,17 +4764,18 @@ const formatHoverValue = (value: number): string => {
 };
 
 const hoveredIndex = (
+  traceIndex: number,
   xValues: Float64Array,
   yValues: Float64Array,
-  sorted: boolean,
   left: number,
   top: number,
   radius: number,
   area: IPathArea
 ): number => {
-  // Return the index of the point of the given trace that gets hovered, if any, i.e. the point which X value is the
-  // closest to the mouse pointer (within HOVER_DISTANCE pixels) if its X values are sorted, or its point that is the
-  // closest to the mouse pointer (within HOVER_DISTANCE pixels) otherwise.
+  // Return the index of the point of the given trace that gets hovered, if any, i.e. the finite point which X value is
+  // the closest to the mouse pointer (within HOVER_DISTANCE pixels) if the X values of its finite points are sorted
+  // (see Note #8 of levelOfDetailUtils.ts), or its finite point that is the closest to the mouse pointer (within
+  // HOVER_DISTANCE pixels) otherwise.
   // Note: like Plotly (see its scatter hoverPoints() and Fx.getClosest()), the distance between the mouse pointer and a
   //       point is reduced by the "radius" of the point (i.e. the radius of its marker, if any, or HOVER_LINE_RADIUS
   //       pixels otherwise), with points within that radius being at a distance of zero. Also, in case of a tie, the
@@ -4795,27 +4788,22 @@ const hoveredIndex = (
   let res = -1;
   let closestDistance = HOVER_DISTANCE;
 
-  if (sorted) {
-    // Look at the points on either side of the X value that is under the mouse pointer (using a binary search),
-    // skipping any point that doesn't have finite X and Y values.
+  const lod = updatedTraceLod(hoverLodUses, traceIndex, xValues, yValues, nbOfPoints);
 
-    const index = lowerBound(xValues, xMin + left / xFactor, nbOfPoints);
+  if (lod.sortedLength === nbOfPoints) {
+    // Look at the finite points on either side of the X value that is under the mouse pointer, skipping any gap
+    // between them and that X value (using our level of detail, so that it costs O(log(number of points))).
 
-    for (const i of [index - 1, index]) {
+    for (const i of levelOfDetailUtils.neighbouringPoints(lod, xValues, yValues, nbOfPoints, xMin + left / xFactor)) {
       if (i < 0 || i >= nbOfPoints) {
         continue;
       }
 
-      const x = xValues[i] as number;
-      const y = yValues[i] as number;
+      const distance = Math.max(Math.abs(((xValues[i] as number) - xMin) * xFactor - left) - radius, 0);
 
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        const distance = Math.max(Math.abs((x - xMin) * xFactor - left) - radius, 0);
-
-        if (distance <= closestDistance) {
-          res = i;
-          closestDistance = distance;
-        }
+      if (distance <= closestDistance) {
+        res = i;
+        closestDistance = distance;
       }
     }
 
@@ -4891,7 +4879,7 @@ const updateHover = (): void => {
     // Determine the point of our series that gets hovered, if any.
 
     const radius = seriesHasMarkers(u, seriesIndex) ? 0.5 * MARKER_SIZE : HOVER_LINE_RADIUS;
-    const index = hoveredIndex(xValues, yValues, !!sortedXValues[seriesIndex - 1], left, top, radius, cssArea);
+    const index = hoveredIndex(seriesIndex - 1, xValues, yValues, left, top, radius, cssArea);
 
     if (index !== -1) {
       const x = xValues[index] as number;
@@ -5125,8 +5113,6 @@ const plotData = (): uPlot.AlignedData => {
   plottedArrays = arrays;
 
   const data = plottedValues.map((plotted: IPlottedValues) => [plotted.x.values, plotted.y.values]);
-
-  sortedXValues = plottedValues.map((plotted: IPlottedValues) => plotted.x.statistics?.sorted ?? false);
 
   return [
     null,
