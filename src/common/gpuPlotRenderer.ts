@@ -35,10 +35,13 @@ import { isContinuationOf } from './traceValues';
 //          same as before (e.g., while a simulation is running), then only the selection of the columns from the first
 //          point that may have changed gets updated and uploaded, i.e. drawing a few more points costs O(number of new
 //          points). The points of a column are not drawn exactly where they would be, but they are all within that
-//          column, so we use LOD_COLUMNS_PER_PIXEL columns per pixel, so that what we draw is within a quarter of a
-//          pixel of what we would otherwise draw (with one column per pixel, near-vertical edges could move by up to a
-//          pixel, which would be visible with antialiasing). Our markers, if any, are never reduced (since they
-//          wouldn't look the same otherwise), i.e. all of our visible markers get drawn.
+//          column, so we use LOD_COLUMNS_PER_PIXEL columns per pixel, so that what we draw is within half a pixel of
+//          what we would otherwise draw. Indeed, with one column per pixel, near-vertical edges could move by up to a
+//          pixel, which is visible with antialiasing (e.g., about 1.5% of the pixels of staircases are noticeably
+//          different from drawing all of their points, against about 0.9% with two columns per pixel), while four
+//          columns per pixel are hardly more accurate (e.g., about 0.6% for staircases), but twice as costly to select
+//          (e.g., while zooming, when our points need to be selected for every frame). Our markers, if any, are never
+//          reduced (since they wouldn't look the same otherwise), i.e. all of our visible markers get drawn.
 
 const GAP_VALUE = 3.0e38;
 const GAP_THRESHOLD = '1.0e38';
@@ -46,7 +49,7 @@ const FLOAT32_EPSILON = 2 ** -24; // Relative precision of a 32-bit float.
 const MAX_PRECISION_ERROR = 0.25; // Maximum position error that we accept (in canvas pixels), see isPrecise().
 const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a trace.
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
-const LOD_COLUMNS_PER_PIXEL = 4; // Number of columns per pixel for our level of detail (see Note #7 above).
+const LOD_COLUMNS_PER_PIXEL = 2; // Number of columns per pixel for our level of detail (see Note #7 above).
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;

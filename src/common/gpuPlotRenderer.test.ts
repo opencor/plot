@@ -597,8 +597,8 @@ describe('render()', () => {
 // Level of detail.
 
 describe('level of detail', () => {
-  // Our plotting area has 400 columns (i.e. 4 per pixel), so our level of detail gets used for a trace with more than
-  // 3,200 (visible) points (see LOD_COLUMNS_PER_PIXEL in gpuPlotRenderer.ts and MIN_POINTS_PER_COLUMN in
+  // Our plotting area has 200 columns (i.e. 2 per pixel), so our level of detail gets used for a trace with more than
+  // 1,600 (visible) points (see LOD_COLUMNS_PER_PIXEL in gpuPlotRenderer.ts and MIN_POINTS_PER_COLUMN in
   // levelOfDetailUtils.ts).
 
   const NB_OF_POINTS = 10000;
@@ -632,7 +632,7 @@ describe('level of detail', () => {
       end,
       area.xMin,
       area.xMax,
-      4 * area.width
+      2 * area.width
     ) as levelOfDetailUtils.ISelection;
 
     return Array.from(selection.indices.subarray(0, selection.nbOfPoints)).flatMap((index) => [
