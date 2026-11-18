@@ -23,9 +23,9 @@ import { isContinuationOf } from './traceValues';
 //          trace. This means that a trace is drawn as a single shape (like a stroked path on a 2D canvas), i.e. its
 //          overlapping segments don't make it darker (e.g., when a trace is faded).
 // Note #5: we may lose our WebGL context (e.g., if the GPU gets reset), in which case we are not available (so that our
-//          plots can fall back to drawing their traces themselves) until our context gets restored, at which point our
-//          listeners (i.e. our plots) get notified, so that they can redraw themselves (which will get their data
-//          uploaded again).
+//          plots can fall back to drawing their traces themselves) until our context gets restored. Our listeners (i.e.
+//          our plots) get notified in both cases, so that they can redraw themselves straight away (which, once our
+//          context is restored, will get their data uploaded again).
 // Note #6: a non-finite value (i.e. a gap in a trace) is uploaded as GAP_VALUE, and a segment with an end beyond
 //          GAP_THRESHOLD is discarded by our vertex shader, so that a gap in the data is drawn as a gap in the trace.
 // Note #7: if the X values of a trace are sorted, then we only draw its visible points. Also, if it has many more
@@ -410,7 +410,7 @@ export interface IGpuPlotPointCounts {
 
 export interface IGpuPlotRenderer {
   isAvailable: () => boolean;
-  onRestored: (listener: () => void) => () => void;
+  onAvailabilityChange: (listener: () => void) => () => void;
   createTrace: () => IGpuPlotTrace;
   render: (
     target: CanvasRenderingContext2D,
@@ -430,7 +430,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   let initialised = false;
   let contextLost = false;
   let generation = 0;
-  const restoredListeners = new Set<() => void>();
+  const availabilityListeners = new Set<() => void>();
 
   const initialise = (): void => {
     // Initialise ourselves, but only once.
@@ -472,6 +472,12 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
         contextLost = true;
         resources = null;
+
+        // Let our listeners know that we are not available anymore.
+
+        for (const listener of availabilityListeners) {
+          listener();
+        }
       });
 
       canvas.addEventListener('webglcontextrestored', () => {
@@ -480,11 +486,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
           contextLost = false;
 
           // Our traces' buffers are gone, so make sure that they get recreated (see IGpuPlotTrace.update()) and let our
-          // listeners know that they can redraw themselves.
+          // listeners know that we are available again.
 
           ++generation;
 
-          for (const listener of restoredListeners) {
+          for (const listener of availabilityListeners) {
             listener();
           }
         } catch (error: unknown) {
@@ -512,13 +518,14 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     return !!gl && !!resources && !contextLost && !gl.isContextLost();
   };
 
-  const onRestored = (listener: () => void): (() => void) => {
-    // Let the given listener know when our WebGL context gets restored, and return a function to stop doing so.
+  const onAvailabilityChange = (listener: () => void): (() => void) => {
+    // Let the given listener know when our WebGL context gets lost or restored (i.e. when we become unavailable or
+    // available again), and return a function to stop doing so.
 
-    restoredListeners.add(listener);
+    availabilityListeners.add(listener);
 
     return () => {
-      restoredListeners.delete(listener);
+      availabilityListeners.delete(listener);
     };
   };
 
@@ -1076,7 +1083,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     return !context.isContextLost();
   };
 
-  return { isAvailable, onRestored, createTrace, render };
+  return { isAvailable, onAvailabilityChange, createTrace, render };
 };
 
 export const gpuPlotRenderer = createGpuPlotRenderer();

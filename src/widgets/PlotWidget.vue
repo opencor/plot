@@ -443,7 +443,7 @@ const rangeEditorRef = vue.shallowRef<HTMLElement | null>(null);
 const hoverTooltipRef = vue.shallowRef<HTMLElement | null>(null);
 const contextMenuRef = vue.ref<InstanceType<typeof ContextMenuWidget> | null>(null);
 let plot: uPlot | undefined;
-let stopListeningToGpuRestorations: (() => void) | undefined;
+let stopListeningToGpuAvailabilityChanges: (() => void) | undefined;
 let plotSignature: string | undefined;
 let isPlotOutdated = false;
 let isUnmounted = false;
@@ -5357,10 +5357,12 @@ vue.onMounted(() => {
     syncLegendWidth();
   });
 
-  // Redraw our plot when our GPU plot renderer gets restored (e.g., after a GPU reset), so that our traces get drawn
-  // using WebGL again, if needed.
+  // Redraw our plot when our GPU plot renderer becomes unavailable (e.g., when the GPU gets reset) or available again,
+  // so that our traces get drawn using Canvas 2D (or not at all) or using WebGL again, if needed, straight away (rather
+  // than the next time our plot gets drawn, e.g., when it gets zoomed). This also means that activeRenderer is always
+  // up to date.
 
-  stopListeningToGpuRestorations = gpuPlotRenderer.onRestored(() => {
+  stopListeningToGpuAvailabilityChanges = gpuPlotRenderer.onAvailabilityChange(() => {
     plot?.redraw(true);
   });
 
@@ -5410,7 +5412,7 @@ vue.onBeforeUnmount(() => {
 
   // Release our data from the GPU.
 
-  stopListeningToGpuRestorations?.();
+  stopListeningToGpuAvailabilityChanges?.();
   disposeGpuTraces();
 });
 

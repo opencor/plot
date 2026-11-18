@@ -947,7 +947,7 @@ describe('level of detail', () => {
 // Context loss.
 
 describe('context loss', () => {
-  it('is not available while its context is lost, and lets its listeners know when it gets restored', () => {
+  it('is not available while its context is lost, and lets its listeners know when it gets lost and restored', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();
     const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
@@ -956,8 +956,8 @@ describe('context loss', () => {
     const xValues = Float64Array.from([1, 2, 3]);
 
     trace.update(xValues, xValues);
-    renderer.onRestored(listener);
-    renderer.onRestored(otherListener)();
+    renderer.onAvailabilityChange(listener);
+    renderer.onAvailabilityChange(otherListener)();
 
     // Lose our context, which we want to be restored.
 
@@ -967,6 +967,7 @@ describe('context loss', () => {
 
     expect(lostEvent.defaultPrevented).toBe(true);
     expect(renderer.isAvailable()).toBe(false);
+    expect(listener).toHaveBeenCalledTimes(1);
     expect(renderer.render(createFakeTarget().context, AREA, items)).toBe(false);
 
     // Restore our context.
@@ -974,7 +975,7 @@ describe('context loss', () => {
     fake.canvas?.dispatchEvent(new Event('webglcontextrestored'));
 
     expect(renderer.isAvailable()).toBe(true);
-    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledTimes(2);
     expect(otherListener).not.toHaveBeenCalled();
 
     // Our trace's buffer is gone, so our trace doesn't get rendered until it gets updated, at which point all of its
