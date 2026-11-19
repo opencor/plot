@@ -1629,10 +1629,21 @@ const exportToCsv = async (): Promise<void> => {
     await common.waitForNextPaint();
 
     // Perform the export itself.
-    // Note: to efficiently export to CSV, we build an array of CSV lines and only join them together at the end. This
-    //       is much more efficient than concatenating strings together repeatedly.
+    // Note: to efficiently export to CSV, we build an array of CSV lines, which we join together for each chunk of rows
+    //       (see below), rather than concatenate strings together repeatedly. Each chunk is then turned into a blob
+    //       and our CSV file is a blob of those blobs. Indeed, our CSV file may be much bigger than the maximum length
+    //       of a string (e.g., about 800 MB for three traces with 10 million points, while the maximum length of a
+    //       string is about 512 MB in Chrome), and a blob may be kept outside of the JavaScript heap.
 
-    const csvLines: string[] = [];
+    const csvType = 'text/csv;charset=utf-8;';
+    const csvChunks: Blob[] = [];
+    let csvLines: string[] = [];
+
+    const addCsvChunk = (): void => {
+      csvChunks.push(new Blob([`${csvLines.join('\r\n')}\r\n`], { type: csvType }));
+
+      csvLines = [];
+    };
 
     // Group our traces by X values, so that traces that share the same X values (e.g., the traces of a given run) also
     // share the same X column, while traces that don't (e.g., the traces of different runs, or a phase plot and a time
@@ -1711,6 +1722,8 @@ const exportToCsv = async (): Promise<void> => {
       csvLines.push(rowParts.join(','));
 
       if ((row + 1) % chunkSize === 0 || row + 1 === nbOfRows) {
+        addCsvChunk();
+
         emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
 
         await common.sleep(common.NO_DELAY);
@@ -1721,9 +1734,14 @@ const exportToCsv = async (): Promise<void> => {
 
     emit('csvExport', { type: 'progress', percent: 100 });
 
-    // Create and download the CSV file.
+    // Create and download the CSV file, making sure that we have added our last lines (e.g., our headers if we have no
+    // rows).
 
-    common.downloadFile('data.csv', csvLines.join('\r\n'), 'text/csv;charset=utf-8;');
+    if (csvLines.length) {
+      addCsvChunk();
+    }
+
+    common.downloadFile('data.csv', new Blob(csvChunks, { type: csvType }), csvType);
   } catch (error: unknown) {
     successfulExport = false;
 
