@@ -46,7 +46,7 @@
     "./style.css": "./dist/opencor-plot.css"
   },
   "scripts": {
-    "build": "vite build --config vite.lib.config.ts && bun --bun scripts/type.check.ts --project tsconfig.lib.types.json",
+    "build": "vite build --config vite.lib.config.ts && bun --bun scripts/type.check.ts --project tsconfig.lib.types.json && bun scripts/declarations.clean.ts",
     "build:demo": "vite build",
     "clean": "bun scripts/clean.ts",
     "dependencies:update": "bun scripts/dependencies.update.ts",
