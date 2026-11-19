@@ -22,13 +22,26 @@
       <section>
         <h2>Status</h2>
         <!--
-        Note: our status has a fixed number of rows, each of which is a single line (with an ellipsis and a tooltip if
-              its value is too long), so that it never makes the rest of our sidebar move.
+        Note #1: our status has a fixed number of rows, each of which is a single line (with an ellipsis and a tooltip
+                 if its value is too long), so that it never makes the rest of our sidebar move.
+        Note #2: a value is highlighted while it is in progress (e.g., "Running..."), and briefly once it has changed
+                 (except for our frame rate, which changes all the time). For the latter, the span of a value is keyed
+                 by its contents, so that it gets recreated (and its highlight animation replayed) whenever it changes.
         -->
         <dl class="demo-status">
           <template v-for="row in statusRows" :key="row.term">
             <dt>{{ row.term }}</dt>
-            <dd :title="row.value">{{ row.value || '—' }}</dd>
+            <dd>
+              <span :key="row.value" class="demo-status-value"
+                :class="{
+                  'demo-status-changed': statusMounted && row.term !== 'Frame rate',
+                  'demo-status-in-progress': row.value.includes('...')
+                }"
+                :title="row.value"
+              >
+                {{ row.value || '—' }}
+              </span>
+            </dd>
           </template>
         </dl>
       </section>
@@ -329,7 +342,7 @@ let liveFrameId = 0;
 let liveNbOfPoints = 0; // Number of points per trace that we have plotted so far.
 let liveTotalNbOfPoints = 0; // Number of points per trace that we will have plotted in the end.
 const liveStatus = vue.ref<string>('');
-const liveRunning = vue.ref<boolean>(false); // Whether a run is going, i.e. whether some of our data is yet to be plotted.
+const liveRunning = vue.ref<boolean>(false); // Whether a run is going, i.e. some of our data is yet to be plotted.
 
 const xAxisRange = (data: IPlotData): [number, number] => {
   // Return the range of the X values of all the traces of the given data.
@@ -479,9 +492,13 @@ const gridStyle = vue.computed(() => {
   const nbOfColumns = layout.value === 'stacked' ? 1 : Math.ceil(Math.sqrt(datasets.value.length));
   const nbOfRows = Math.ceil(datasets.value.length / Math.max(1, nbOfColumns));
 
+  const scale = benchmarkResizeScale.value;
+
   return {
     gridTemplateColumns: `repeat(${nbOfColumns}, minmax(0, 1fr))`,
-    gridTemplateRows: `repeat(${nbOfRows}, minmax(0, 1fr))`
+    gridTemplateRows: `repeat(${nbOfRows}, minmax(0, 1fr))`,
+    width: scale !== 1 ? `${100 * scale}%` : undefined,
+    height: scale !== 1 ? `${100 * scale}%` : undefined
   };
 });
 
@@ -612,18 +629,22 @@ vue.onBeforeUnmount(() => {
 //  - live: we plot our data as if it was being generated (see Live updating above), from no points to all of them in
 //    BENCHMARK_LIVE_FRAMES frames, over and over, with a fixed X range (like a simulation that is plotted for its whole
 //    duration). This means that every frame, our instances get a few more points (i.e. a continuation of their
-//    previous ones, see traceValues.ts), which they need to process and draw.
+//    previous ones, see traceValues.ts), which they need to process and draw; and
+//  - resize: we shrink our instances (i.e. our grid of instances) to BENCHMARK_MIN_RESIZE_SCALE of their width and
+//    height, and then grow them back, in BENCHMARK_RESIZE_FRAMES frames, over and over (like when resizing a window).
+//    This means that every frame, our instances get laid out and drawn again.
 // Note #1: our frame rate is capped by the refresh rate of the display (e.g., 60 FPS), so the time it takes our
 //          instances to redraw themselves is what tells us how much headroom we have.
 // Note #2: our instances redraw themselves in their requestAnimationFrame() callbacks, which they request when they
-//          get zoomed, panned, or updated. So, every frame, we zoom, pan, or update them from a requestAnimationFrame()
-//          callback (onFrameEnd()) that we request after that (so that it gets called after theirs in the next frame)
-//          and that is preceded by another one (onFrameStart()) that we request before that (so that it gets called
-//          before theirs in the next frame). The redraw time of our instances is then the time between the start of
-//          onFrameStart() and the end of the frame, i.e. once the browser has rendered it, which is when the message
-//          that onFrameEnd() posts gets handled. This includes everything that happens during the frame: our instances
-//          redrawing themselves, processing their new data (which they do once onFrameEnd() has returned), and the
-//          browser rendering the frame.
+//          get zoomed, panned, or updated (or when they get resized, once the browser has laid out our frame). So,
+//          every frame, we zoom, pan, or update them from a requestAnimationFrame() callback (onFrameEnd()) that we
+//          request after that (so that it gets called after theirs in the next frame) and that is preceded by another
+//          one (onFrameStart()) that we request before that (so that it gets called before theirs in the next frame).
+//          The redraw time of our instances is then the time between the start of onFrameStart() and the end of the
+//          frame, i.e. once the browser has rendered it, which is when the message that onFrameEnd() posts gets
+//          handled. This includes everything that happens during the frame: our instances redrawing themselves,
+//          processing their new data (which they do once onFrameEnd() has returned), and the browser rendering the
+//          frame.
 // Note #3: WebGL draws asynchronously, so the GPU time of a frame is not (fully) included in the redraw time of our
 //          instances (but it limits our frame rate if our frame rate is not capped).
 // Note #4: we zoom our instances by sending wheel events to them (i.e. to the element of uPlot that handles them, or to
@@ -640,6 +661,8 @@ const BENCHMARK_PAN_ZOOMS = [1, 10, 100]; // Zooms at which we pan our instances
 const BENCHMARK_WHEEL_DELTA = 20; // Biggest wheel delta that our plot accounts for, i.e. a zoom factor of e^0.1.
 const BENCHMARK_RESET_DELAY = 500; // Delay (in milliseconds) for our zoom to be reset (since it is animated).
 const BENCHMARK_LIVE_FRAMES = 300; // Number of frames in which we plot all of our data live.
+const BENCHMARK_MIN_RESIZE_SCALE = 0.6; // Smallest scale of our grid of instances, when we resize them.
+const BENCHMARK_RESIZE_FRAMES = 120; // Number of frames in which we shrink our instances and grow them back.
 const KEYBOARD_PAN_FRACTION = 0.1; // See Note #5 above.
 
 const zoomSteps = (zoom: number): number => {
@@ -654,6 +677,8 @@ interface IBenchmarkResult {
 }
 
 const benchmarking = vue.ref<boolean>(false); // Whether we are running our benchmark.
+const benchmarkInteraction = vue.ref<string>(''); // Name of the interaction that we are running, if any.
+const benchmarkResizeScale = vue.ref<number>(1); // Scale of our grid of instances (see our resize interaction).
 const benchmarkResults = vue.ref<Record<string, IBenchmarkResult>>({}); // Results of our interactions, by name.
 let benchmarkRun = 0; // Number of the current run of our benchmark, so that a stopped run can tell that it was stopped.
 let benchmarkFrameStartId = 0; // Id of our next onFrameStart() callback.
@@ -670,6 +695,8 @@ const stopBenchmark = (): void => {
   benchmarkFrameStartId = 0;
   benchmarkFrameEndId = 0;
   benchmarking.value = false;
+  benchmarkInteraction.value = '';
+  benchmarkResizeScale.value = 1;
 };
 
 const percentile = (values: number[], fraction: number): number => {
@@ -803,6 +830,8 @@ const runBenchmark = async (): Promise<void> => {
 
     sendKeyPress('0');
 
+    benchmarkInteraction.value = '';
+
     if (!result) {
       return false;
     }
@@ -816,6 +845,8 @@ const runBenchmark = async (): Promise<void> => {
   benchmarkResults.value = {};
 
   // Zoom our instances in and out, along both axes.
+
+  benchmarkInteraction.value = 'zoom';
 
   const maxZoomSteps = zoomSteps(BENCHMARK_MAX_ZOOM);
   const overs = [...document.querySelectorAll<HTMLElement>('.demo-plot .u-over')];
@@ -838,6 +869,8 @@ const runBenchmark = async (): Promise<void> => {
   // Pan our instances, at different zooms.
 
   for (const zoom of BENCHMARK_PAN_ZOOMS) {
+    benchmarkInteraction.value = `pan${zoom}`;
+
     await delay(BENCHMARK_RESET_DELAY);
 
     // Zoom our instances in along their X axis only (i.e. using their X axis dragger), and wait for them to be done
@@ -887,6 +920,8 @@ const runBenchmark = async (): Promise<void> => {
   // Plot our data live, with a fixed X range, stopping our own live updating, if any, while we do so, and then showing
   // our data as it was before (i.e. all at once or live).
 
+  benchmarkInteraction.value = 'live';
+
   await delay(BENCHMARK_RESET_DELAY);
 
   if (isStopped()) {
@@ -910,6 +945,30 @@ const runBenchmark = async (): Promise<void> => {
   }
 
   if (!record('live', liveResult)) {
+    return;
+  }
+
+  // Resize our instances, i.e. shrink them and grow them back, over and over, and then make them their normal size
+  // again.
+
+  benchmarkInteraction.value = 'resize';
+
+  await delay(BENCHMARK_RESET_DELAY);
+
+  if (isStopped()) {
+    return;
+  }
+
+  const halfResize = 0.5 * BENCHMARK_RESIZE_FRAMES;
+  const resizeResult = await runInteraction((frame) => {
+    const progress = 1 - Math.abs(((frame % BENCHMARK_RESIZE_FRAMES) - halfResize) / halfResize);
+
+    benchmarkResizeScale.value = 1 - (1 - BENCHMARK_MIN_RESIZE_SCALE) * progress;
+  });
+
+  benchmarkResizeScale.value = 1;
+
+  if (!record('resize', resizeResult)) {
     return;
   }
 
@@ -981,16 +1040,25 @@ const benchmarkRows = vue.computed(() => {
   const interactions: [name: string, label: string][] = [
     ['zoom', 'Zoom'],
     ...BENCHMARK_PAN_ZOOMS.map((zoom): [string, string] => [`pan${zoom}`, `Pan (${zoom}×)`]),
-    ['live', 'Live']
+    ['live', 'Live'],
+    ['resize', 'Resize']
   ];
 
   return interactions.flatMap(([name, label]) => {
     const result = benchmarkResults.value[name];
 
     return [
-      { term: `${label} benchmark`, value: result?.fps ?? (benchmarking.value ? 'Running...' : '') },
+      { term: `${label} benchmark`, value: result?.fps ?? (benchmarkInteraction.value === name ? 'Running...' : '') },
       { term: `${label} redraw`, value: result?.redraw ?? '' }
     ];
+  });
+});
+
+const statusMounted = vue.ref<boolean>(false); // Whether our status is mounted (so it isn't highlighted then).
+
+vue.onMounted(() => {
+  void vue.nextTick().then(() => {
+    statusMounted.value = true;
   });
 });
 
@@ -1182,10 +1250,43 @@ const onWindowPointerDown = (event: PointerEvent): void => {
   }
 
   .demo-status dd {
-    overflow: hidden;
+    min-width: 0;
     margin: 0;
+  }
+
+  .demo-status-value {
+    display: block;
+    overflow: hidden;
+    margin: 0 -0.25rem;
+    padding: 0 0.25rem;
+    border-radius: 0.25rem;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+
+  /**
+   * Note: a changed value keeps our highlight colour for a moment and then fades to no background, while a value in
+   *       progress keeps our highlight colour (see our template).
+   */
+
+  .demo-status-changed {
+    animation: demo-status-changed 2s ease-out;
+  }
+
+  .demo-status-in-progress {
+    background-color: var(--demo-highlight);
+    animation: none;
+  }
+
+  @keyframes demo-status-changed {
+    0%,
+    25% {
+      background-color: var(--demo-highlight);
+    }
+
+    100% {
+      background-color: transparent;
+    }
   }
 
   .demo-custom-menu {

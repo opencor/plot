@@ -5,6 +5,7 @@
   --demo-background: #fff;
   --demo-text: #1f2937;
   --demo-border: #d1d5db;
+  --demo-highlight: #fde68a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -12,6 +13,7 @@
     --demo-background: #18181b;
     --demo-text: #e4e4e7;
     --demo-border: #3f3f46;
+    --demo-highlight: #854d0e;
   }
 }
 
