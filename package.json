@@ -6,7 +6,7 @@
   "bugs": {
     "url": "https://github.com/opencor/plot/issues"
   },
-  "description": "A Vue 3 component for plotting data, using uPlot and WebGL.",
+  "description": "A Vue 3 component for plotting data, using uPlot, Canvas 2D, and WebGL.",
   "files": [
     "dist",
     "README.md",
@@ -20,6 +20,7 @@
     "plot",
     "chart",
     "uplot",
+    "canvas",
     "webgl"
   ],
   "license": "Apache-2.0",
