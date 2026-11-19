@@ -1109,6 +1109,29 @@ describe('level of detail', () => {
     expect(lineDraws(fake)).toEqual([[0, expectedPoints.length / 2 - 1]]);
   });
 
+  it('rarely reallocates its selection buffer while a smooth unsorted trace keeps growing', () => {
+    // A growing trace (e.g., while a simulation is running) gets more and more points in its path level, so our
+    // selection buffer should grow geometrically rather than be reallocated every time.
+
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xBuffer, yBuffer] = curve(2 * NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+    let nbOfSelectionBuffers = 0;
+
+    for (let nbOfPoints = NB_OF_POINTS; nbOfPoints <= 2 * NB_OF_POINTS; nbOfPoints += NB_OF_POINTS / 20) {
+      trace.update(xBuffer.subarray(0, nbOfPoints), yBuffer.subarray(0, nbOfPoints));
+
+      fake.calls.length = 0;
+
+      renderer.render(createFakeTarget().context, CURVE_AREA, items);
+
+      nbOfSelectionBuffers += calls(fake, 'createBuffer').length;
+    }
+
+    expect(nbOfSelectionBuffers).toBeLessThanOrEqual(3);
+  });
+
   it('uses the given path level of detail, if any, which it then does not count as its memory', () => {
     const { renderer } = createRenderer();
     const sharedPathLod = pathLevelOfDetailUtils.create();

@@ -781,7 +781,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       uploadedPathLevel = pathLevel;
       uploadedSelectionNumber = Number.NaN; // So that our next selection gets uploaded in full (see uploadSelection()).
 
-      return uploadPoints(context, level.indices, level.count, level.count, 0, xs, ys);
+      // Note: we make sure that our selection buffer can hold as many points as the indices of our level can, rather
+      //       than its points, since our level may have more and more points (e.g., while a simulation is running), so
+      //       that our selection buffer doesn't need to be reallocated (almost) every time.
+
+      return uploadPoints(context, level.indices, level.count, level.indices.length, 0, xs, ys);
     };
 
     const uploadPoints = (
