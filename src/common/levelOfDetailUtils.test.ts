@@ -580,8 +580,8 @@ describe('selectPoints()', () => {
   });
 
   it('selects the points needed to draw some points, with or without gaps', () => {
-    // Check our selection for different numbers of points (so that we have up to five levels of blocks), with or without
-    // gaps, X ranges, and numbers of columns.
+    // Check our selection for different numbers of points (so that we have up to five levels of blocks), with or
+    // without gaps, X ranges, and numbers of columns.
 
     const random = randomGenerator(123);
 

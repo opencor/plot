@@ -39,8 +39,8 @@ export const downloadFile = (filename: string, content: string | Blob, type: str
 // A method to sanitise some HTML that may come from an untrusted source (e.g., the name of a trace or the title of an
 // axis in a UI JSON file, or the description of an issue), so that it can be rendered as HTML (e.g., using v-html).
 // Note #1: only a few formatting elements are kept (e.g., "<i>I<sub>K,r</sub></i>"), without any of their attributes.
-//          Any other element is replaced with its contents, unless its contents are not meant to be shown as text (e.g.,
-//          a script), in which case it is removed altogether.
+//          Any other element is replaced with its contents, unless its contents are not meant to be shown as text
+//          (e.g., a script), in which case it is removed altogether.
 // Note #2: our HTML is parsed in a separate document, so that nothing in it gets loaded or run (e.g., an image).
 // Note #3: the same HTML tends to be sanitised over and over again (e.g., the name of a trace each time the legend of a
 //          plot is rendered), so we cache our results.

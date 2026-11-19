@@ -15,8 +15,8 @@ import * as vue from 'vue';
 import * as common from '../common/common';
 
 // The last point of the visible traces of a plot when its data is live (e.g., while a simulation is running), so that
-// their latest value can easily be identified (see PlotWidget.vue). The last point of a trace is shown as a target, i.e.
-// (from the inside out) a disc of its colour, a gap of the background colour, a ring of the text colour (i.e. near
+// their latest value can easily be identified (see PlotWidget.vue). The last point of a trace is shown as a target,
+// i.e. (from the inside out) a disc of its colour, a gap of the background colour, a ring of the text colour (i.e. near
 // black in light mode and near white in dark mode), and a halo of the background colour. Being a high-contrast shape
 // that is not otherwise found in our plots, it stands out even where a trace overlaps itself (e.g., in a phase plot),
 // while its disc still shows which trace it belongs to.

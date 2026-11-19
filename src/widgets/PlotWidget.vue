@@ -4734,9 +4734,9 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 //    nothing on our side can avoid (we tried using different line joins, stroking a trace in chunks, and drawing it
 //    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
 // So, we use Canvas 2D in browsers other than Firefox, unless it would need to stroke at least
-// AUTO_WEBGL_MIN_CANVAS_POINTS points for our visible traces, i.e. all the points of a trace, unless our level of detail
-// is used for it (see linearPathPoints()), in which case at most AUTO_CANVAS_POINTS_PER_COLUMN points per column if its
-// X values are sorted, or the points of the level of our path level of detail that would be used otherwise.
+// AUTO_WEBGL_MIN_CANVAS_POINTS points for our visible traces, i.e. all the points of a trace, unless our level of
+// detail is used for it (see linearPathPoints()), in which case at most AUTO_CANVAS_POINTS_PER_COLUMN points per column
+// if its X values are sorted, or the points of the level of our path level of detail that would be used otherwise.
 // Note: we only check whether the X values of a trace are sorted (using its level of detail, see
 //       levelOfDetailUtils.ts) if our visible traces have enough points between them for it to matter, so that we
 //       don't create a level of detail for a trace that doesn't otherwise need one. Also, our path level of detail is
