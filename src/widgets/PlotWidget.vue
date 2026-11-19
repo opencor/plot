@@ -4383,8 +4383,9 @@ const linearPath = (
 //          what it would otherwise look like (along each axis) using our path level of detail (see
 //          pathLevelOfDetailUtils.ts), and only give them to linearPath(). For a smooth trace, this means a few
 //          thousand rather than millions of points, but not for a noisy trace (which our path level of detail can't
-//          reduce, in which case we give all of its points to linearPath()). Our path level of detail is only used for
-//          Canvas 2D (including to decide whether to use it, see useCanvas2D()), so it is not shared.
+//          reduce, in which case we give all of its points to linearPath()). Like our level of detail, our path level
+//          of detail is shared with our GPU plot renderer (see gpuFrameItemsOf()) and with useCanvas2D(), with the same
+//          invalidation rules (see Note #4 above).
 
 const PATH_LOD_TOLERANCE = 0.25; // In canvas pixels, i.e. our traces are off by at most about 0.35 canvas pixels.
 
@@ -4444,6 +4445,14 @@ const updatedTraceLod = (
 
   return lod;
 };
+const pathLod = (traceIndex: number): pathLevelOfDetailUtils.IPathLevelOfDetail => {
+  // Return the path level of detail of the given trace, creating it if needed (see Note #5 above).
+
+  pathLods[traceIndex] ??= pathLevelOfDetailUtils.create();
+
+  return pathLods[traceIndex];
+};
+
 const updatedPathLod = (
   traceIndex: number,
   xValues: Float64Array,
@@ -4454,10 +4463,9 @@ const updatedPathLod = (
   // that may have changed since we last used it (see Note #5 above).
 
   pathLodUses[traceIndex] ??= { xValues: undefined, yValues: undefined, count: 0 };
-  pathLods[traceIndex] ??= pathLevelOfDetailUtils.create();
 
   const use = pathLodUses[traceIndex] as ILodUse;
-  const lod = pathLods[traceIndex] as pathLevelOfDetailUtils.IPathLevelOfDetail;
+  const lod = pathLod(traceIndex);
   const from =
     use.count > 0 && isContinuationOf(xValues, use.xValues) && isContinuationOf(yValues, use.yValues)
       ? Math.min(use.count - 1, count)
@@ -4485,6 +4493,8 @@ const canvasPathLevel = (
 
   return pathLevelOfDetailUtils.selectLevel(
     updatedPathLod(traceIndex, xValues, yValues, count),
+    xValues,
+    yValues,
     (PATH_LOD_TOLERANCE * (area.xMax - area.xMin)) / area.width,
     (PATH_LOD_TOLERANCE * (area.yMax - area.yMin)) / area.height
   );
@@ -4690,7 +4700,7 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
       continue;
     }
 
-    gpuTraces[seriesIndex - 1] ??= gpuPlotRenderer.createTrace(traceLod(seriesIndex - 1));
+    gpuTraces[seriesIndex - 1] ??= gpuPlotRenderer.createTrace(traceLod(seriesIndex - 1), pathLod(seriesIndex - 1));
 
     const gpuTrace = gpuTraces[seriesIndex - 1] as IGpuPlotTrace;
 

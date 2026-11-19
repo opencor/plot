@@ -1,4 +1,5 @@
 import * as levelOfDetailUtils from './levelOfDetailUtils';
+import * as pathLevelOfDetailUtils from './pathLevelOfDetailUtils';
 import { isContinuationOf } from './traceValues';
 
 // A GPU-based renderer for the traces (and their markers) of our plots (see PlotWidget.vue).
@@ -48,6 +49,11 @@ import { isContinuationOf } from './traceValues';
 //          columns per pixel are hardly more accurate (e.g., about 0.6% for staircases), but twice as costly to select
 //          (e.g., while zooming, when our points need to be selected for every frame). Our markers, if any, are never
 //          reduced (since they wouldn't look the same otherwise), i.e. all of our visible markers get drawn.
+//          If the X values of a trace are not sorted (e.g., a phase plot), then we draw the points of the level of its
+//          path level of detail (see pathLevelOfDetailUtils.ts) that keeps it within PATH_LOD_TOLERANCE pixels of what
+//          we would otherwise draw (along each axis), if any (e.g., not for a noisy trace), which we also keep in that
+//          separate buffer, and which we only upload again when that level (or its version) changes. For a smooth
+//          trace, this means a few thousand rather than millions of points.
 // Note #8: copying what we rendered for a plot to its canvas (see Note #1 above) requires the GPU to have finished
 //          rendering it, so copying it straight after rendering it means waiting for the GPU for each plot, which is
 //          costly with many plots (e.g., about 55 ms per frame for 16 plots in Safari, against about 1 ms otherwise).
@@ -65,8 +71,9 @@ const MAX_PRECISION_ERROR = 0.25; // Maximum position error that we accept (in c
 const MIN_CAPACITY = 1024; // Minimum capacity (in points) of the buffer of a trace.
 const BYTES_PER_POINT = 8; // Two 32-bit floats per point.
 const LOD_COLUMNS_PER_PIXEL = 2; // Number of columns per pixel for our level of detail (see Note #7 above).
-const COVERAGE_CHANNELS = 4; // Number of channels of our coverage texture, i.e. of traces per batch (see Note #4 above).
-const MAX_ATLAS_SIZE = 4096; // Maximum width and height of our canvas when it holds several regions (see Note #8 above).
+const PATH_LOD_TOLERANCE = 0.25; // In pixels, like for Canvas 2D (see linearPathPoints() in PlotWidget.vue).
+const COVERAGE_CHANNELS = 4; // Number of channels of our coverage texture, i.e. of traces per batch (see Note #4).
+const MAX_ATLAS_SIZE = 4096; // Max width and height of our canvas when it holds several regions (see Note #8 above).
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -448,7 +455,10 @@ export interface IGpuPlotPointCounts {
 export interface IGpuPlotRenderer {
   isAvailable: () => boolean;
   onAvailabilityChange: (listener: () => void) => () => void;
-  createTrace: (lod?: levelOfDetailUtils.ILevelOfDetail) => IGpuPlotTrace;
+  createTrace: (
+    lod?: levelOfDetailUtils.ILevelOfDetail,
+    pathLod?: pathLevelOfDetailUtils.IPathLevelOfDetail
+  ) => IGpuPlotTrace;
   render: (
     target: CanvasRenderingContext2D,
     area: IGpuPlotArea,
@@ -583,9 +593,13 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     };
   };
 
-  const createTrace = (sharedLod?: levelOfDetailUtils.ILevelOfDetail): IGpuPlotTrace => {
-    // Create a trace, which uses the given level of detail, if any (e.g., so that it can be shared with the Canvas 2D
-    // renderer of a plot, see linearPathPoints() in PlotWidget.vue), or its own level of detail otherwise.
+  const createTrace = (
+    sharedLod?: levelOfDetailUtils.ILevelOfDetail,
+    sharedPathLod?: pathLevelOfDetailUtils.IPathLevelOfDetail
+  ): IGpuPlotTrace => {
+    // Create a trace, which uses the given (path) level of detail, if any (e.g., so that it can be shared with the
+    // Canvas 2D renderer of a plot, see linearPathPoints() in PlotWidget.vue), or its own (path) level of detail
+    // otherwise.
 
     let buffer: WebGLBuffer | null = null;
     let bufferGeneration = -1;
@@ -599,6 +613,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     let maxAbsY = 0;
     let lod = sharedLod ?? levelOfDetailUtils.create();
     let ownsLod = !sharedLod;
+    let pathLod = sharedPathLod ?? pathLevelOfDetailUtils.create();
+    let ownsPathLod = !sharedPathLod;
+    let uploadedPathLevel = ''; // Level of our path level of detail, and its version, that we last uploaded.
     let selectionBuffer: WebGLBuffer | null = null;
     let uploadedSelectionNumber = -1;
     let selectionBufferGeneration = -1;
@@ -632,6 +649,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       yValues = newYValues;
 
       levelOfDetailUtils.invalidate(lod, start);
+      pathLevelOfDetailUtils.invalidate(pathLod, start);
 
       // Use the first finite point as our origin, if we are uploading all of our data.
 
@@ -710,6 +728,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       yValues = undefined;
       lod = levelOfDetailUtils.create();
       ownsLod = true;
+      pathLod = pathLevelOfDetailUtils.create();
+      ownsPathLod = true;
+      uploadedPathLevel = '';
       selectionBuffer = null;
       selectionBufferCapacity = 0;
       uploadedSelectionNumber = -1;
@@ -726,13 +747,53 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // Note: we upload every selection that we make (see drawnPoints()), so if our selection directly follows the one
       //       that we last uploaded, then the part of it that changed since we last uploaded it is the part that
       //       changed since its previous selection. Otherwise (e.g., if our level of detail is shared and was used to
-      //       make a selection in between), all of it may have changed (see Note #7 of levelOfDetailUtils.ts).
+      //       make a selection in between, or if we uploaded the level of our path level of detail in between), all of
+      //       it may have changed (see Note #7 of levelOfDetailUtils.ts).
 
-      let from = selection.number === uploadedSelectionNumber + 1 ? selection.firstChanged : 0;
+      const from = selection.number === uploadedSelectionNumber + 1 ? selection.firstChanged : 0;
 
       uploadedSelectionNumber = selection.number;
+      uploadedPathLevel = '';
 
-      // Upload our selection in full if our buffer belongs to a lost context or if it is not big enough.
+      return uploadPoints(context, selection.indices, selection.nbOfPoints, selection.indices.length, from, xs, ys);
+    };
+
+    const uploadPathLevel = (
+      context: WebGL2RenderingContext,
+      level: pathLevelOfDetailUtils.IPathLevel,
+      xs: Float64Array,
+      ys: Float64Array
+    ): WebGLBuffer | null => {
+      // Upload the points of the given level of our path level of detail (see Note #7 above), unless we already did
+      // (and our buffer still belongs to our context), and return the buffer that contains them.
+
+      const pathLevel = `${level.level}:${pathLod.version}`;
+
+      if (pathLevel === uploadedPathLevel && selectionBuffer && selectionBufferGeneration === generation) {
+        return selectionBuffer;
+      }
+
+      uploadedPathLevel = pathLevel;
+      uploadedSelectionNumber = Number.NaN; // So that our next selection gets uploaded in full (see uploadSelection()).
+
+      return uploadPoints(context, level.indices, level.count, level.count, 0, xs, ys);
+    };
+
+    const uploadPoints = (
+      context: WebGL2RenderingContext,
+      indices: Int32Array,
+      nbOfPoints: number,
+      minCapacity: number,
+      start: number,
+      xs: Float64Array,
+      ys: Float64Array
+    ): WebGLBuffer | null => {
+      // Upload the given points, from the given one, to our selection buffer, making sure that it can hold at least
+      // the given number of points, and return it.
+
+      let from = start;
+
+      // Upload our points in full if our buffer belongs to a lost context or if it is not big enough.
 
       if (selectionBufferGeneration !== generation) {
         selectionBuffer = null;
@@ -740,13 +801,13 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         selectionBufferCapacity = 0;
       }
 
-      if (!selectionBuffer || selectionBufferCapacity < selection.indices.length) {
+      if (!selectionBuffer || selectionBufferCapacity < minCapacity) {
         if (selectionBuffer) {
           context.deleteBuffer(selectionBuffer);
         }
 
         selectionBuffer = context.createBuffer();
-        selectionBufferCapacity = selection.indices.length;
+        selectionBufferCapacity = minCapacity;
 
         context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
         context.bufferData(context.ARRAY_BUFFER, selectionBufferCapacity * BYTES_PER_POINT, context.DYNAMIC_DRAW);
@@ -754,10 +815,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         from = 0;
       }
 
-      // Convert and upload our (changed) selected points, some of which may be gaps (see Note #4 and Note #8 of
-      // levelOfDetailUtils.ts), in which case they get uploaded as such (see Note #6 above).
+      // Convert and upload our (changed) points, some of which may be gaps (see Note #4 and Note #8 of
+      // levelOfDetailUtils.ts, and Note #4 of pathLevelOfDetailUtils.ts), in which case they get uploaded as such (see
+      // Note #6 above).
 
-      const nbOfValues = 2 * (selection.nbOfPoints - from);
+      const nbOfValues = 2 * (nbOfPoints - from);
 
       if (nbOfValues > 0) {
         if (selectionUploadBuffer.length < nbOfValues) {
@@ -765,11 +827,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
         }
 
         const values = selectionUploadBuffer;
-        const indices = selection.indices;
         const xOrigin = originX;
         const yOrigin = originY;
 
-        for (let i = from, j = 0; i < selection.nbOfPoints; ++i, j += 2) {
+        for (let i = from, j = 0; i < nbOfPoints; ++i, j += 2) {
           const index = indices[i] as number;
           const x = xs[index] as number;
           const y = ys[index] as number;
@@ -799,7 +860,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     ): IDrawnPoints => {
       // Return the points that we need to draw for the given plotting area (see Note #7 above), i.e. all of our points
       // (always if we are not to use our level of detail), or only our visible points if our X values are sorted and,
-      // for our line, possibly only some of them.
+      // for our line, possibly only some of them, or, for our line, the points of a level of our path level of detail
+      // if our X values are not sorted.
 
       const res: IDrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
       const nbOfColumns = Math.max(1, Math.ceil(LOD_COLUMNS_PER_PIXEL * area.width));
@@ -815,6 +877,24 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       levelOfDetailUtils.update(lod, xValues, yValues, count);
 
       if (lod.sortedLength < count) {
+        if (lineWidth > 0) {
+          pathLevelOfDetailUtils.update(pathLod, xValues, yValues, count);
+
+          const level = pathLevelOfDetailUtils.selectLevel(
+            pathLod,
+            xValues,
+            yValues,
+            (PATH_LOD_TOLERANCE * (area.xMax - area.xMin)) / area.width,
+            (PATH_LOD_TOLERANCE * (area.yMax - area.yMin)) / area.height
+          );
+
+          if (level) {
+            res.lineBuffer = uploadPathLevel(context, level, xValues, yValues);
+            res.lineStart = 0;
+            res.lineEnd = level.count;
+          }
+        }
+
         return res;
       }
 
@@ -852,7 +932,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       // context (since they are gone).
 
       return {
-        cpu: ownsLod ? levelOfDetailUtils.memoryUsage(lod) : 0,
+        cpu:
+          (ownsLod ? levelOfDetailUtils.memoryUsage(lod) : 0) +
+          (ownsPathLod ? pathLevelOfDetailUtils.memoryUsage(pathLod) : 0),
         gpu:
           (buffer && bufferGeneration === generation ? capacity * BYTES_PER_POINT : 0) +
           (selectionBuffer && selectionBufferGeneration === generation ? selectionBufferCapacity * BYTES_PER_POINT : 0)

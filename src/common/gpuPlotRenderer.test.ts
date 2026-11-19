@@ -9,6 +9,7 @@ import {
   isPrecise
 } from './gpuPlotRenderer';
 import * as levelOfDetailUtils from './levelOfDetailUtils';
+import * as pathLevelOfDetailUtils from './pathLevelOfDetailUtils';
 
 // A fake WebGL 2 context, since there is no WebGL in our test environment.
 // Note #1: our fake context records the calls that are made to it, and keeps track of the contents of its buffers, so
@@ -906,23 +907,237 @@ describe('level of detail', () => {
     ]);
   });
 
-  it('draws all the points of a trace with many unsorted points', () => {
+  // Some unsorted points, i.e. a smooth curve (so that our path level of detail keeps it within our tolerance using a
+  // few of its points) or some noise (so that our path level of detail can't do anything about it, see Note #7 of
+  // pathLevelOfDetailUtils.ts), in a plotting area that is about as big as them.
+
+  const CURVE_AREA: IGpuPlotArea = { ...AREA, xMin: -1, xMax: 1, yMin: -1, yMax: 1 };
+
+  const curve = (nbOfPoints: number): [xValues: Float64Array, yValues: Float64Array] => {
+    return [
+      Float64Array.from({ length: nbOfPoints }, (_value, i) => Math.sin((60 * i) / nbOfPoints)),
+      Float64Array.from({ length: nbOfPoints }, (_value, i) => Math.sin((80 * i) / nbOfPoints))
+    ];
+  };
+
+  const noise = (nbOfPoints: number): [xValues: Float64Array, yValues: Float64Array] => {
+    let state = 1;
+    const random = (): number => {
+      state = (state * 16807) % 2147483647;
+
+      return 2 * (state / 2147483647) - 1;
+    };
+
+    return [Float64Array.from({ length: nbOfPoints }, random), Float64Array.from({ length: nbOfPoints }, random)];
+  };
+
+  const pathLevelPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
+    // Return the points of the level of our path level of detail that we should draw for the given values and
+    // plotting area (i.e. with tolerances of a quarter of a pixel), relative to their first point and as 32-bit
+    // floats, i.e. what our renderer should upload.
+
+    const nbOfPoints = Math.min(xValues.length, yValues.length);
+    const lod = pathLevelOfDetailUtils.create();
+
+    pathLevelOfDetailUtils.update(lod, xValues, yValues, nbOfPoints);
+
+    const level = pathLevelOfDetailUtils.selectLevel(
+      lod,
+      xValues,
+      yValues,
+      (0.25 * (area.xMax - area.xMin)) / area.width,
+      (0.25 * (area.yMax - area.yMin)) / area.height
+    );
+
+    return Array.from(level?.indices.subarray(0, level.count) ?? []).flatMap((index) => [
+      Math.fround((xValues[index] as number) - (xValues[0] as number)),
+      Math.fround((yValues[index] as number) - (yValues[0] as number))
+    ]);
+  };
+
+  const selectionUploads = (fake: IFakeContext): number => {
+    // Return the number of uploads that were made to our selection buffer (i.e. to any buffer but our first one, since
+    // our selection buffer gets replaced when it needs to be bigger).
+
+    let res = 0;
+    let boundBuffer: unknown;
+
+    for (const [name, args] of fake.calls) {
+      if (name === 'bindBuffer' && args[0] === 'ARRAY_BUFFER') {
+        boundBuffer = args[1];
+      } else if (name === 'bufferSubData' && boundBuffer !== fake.buffers[0]) {
+        ++res;
+      }
+    }
+
+    return res;
+  };
+
+  it('only draws the points of a level of its path level of detail for the line of a smooth unsorted trace', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();
-    const [xValues, yValues] = values(NB_OF_POINTS);
-
-    xValues[5000] = 1;
+    const [xValues, yValues] = curve(NB_OF_POINTS);
 
     trace.update(xValues, yValues);
 
     fake.calls.length = 0;
 
-    renderer.render(createFakeTarget().context, LOD_AREA, [
+    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+
+    renderer.render(
+      createFakeTarget().context,
+      CURVE_AREA,
+      [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }],
+      pointCounts
+    );
+
+    // The points of our level get uploaded to a separate buffer, from which our line gets drawn.
+
+    const expectedPoints = pathLevelPoints(xValues, yValues, CURVE_AREA);
+    const nbOfLevelPoints = expectedPoints.length / 2;
+
+    expect(nbOfLevelPoints).toBeGreaterThan(0);
+    expect(nbOfLevelPoints).toBeLessThan(NB_OF_POINTS / 10);
+    expect(fake.buffers.length).toBe(2);
+    expect(bufferPoints(fake, fake.buffers[1], expectedPoints.length)).toEqual(expectedPoints);
+    expect(lineDraws(fake)).toEqual([[0, nbOfLevelPoints - 1]]);
+    expect(pointCounts).toEqual({ nbOfPoints: NB_OF_POINTS, nbOfDrawnPoints: nbOfLevelPoints });
+  });
+
+  it('draws all the points of a noisy unsorted trace, and all the markers of an unsorted trace', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+
+    // Our path level of detail has no level for our noise once it has enough points for its levels to be dropped.
+
+    const nbOfPoints = pathLevelOfDetailUtils.MIN_NB_OF_POINTS_TO_DROP_LEVELS;
+    const [xValues, yValues] = noise(nbOfPoints);
+
+    expect(pathLevelPoints(xValues, yValues, CURVE_AREA)).toEqual([]);
+
+    trace.update(xValues, yValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, CURVE_AREA, [
       { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
     ]);
 
     expect(fake.buffers.length).toBe(1);
-    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS - 1]]);
+    expect(lineDraws(fake)).toEqual([[0, nbOfPoints - 1]]);
+
+    // Without a line (i.e. only markers), our path level of detail is not used either, even for a smooth trace.
+
+    const [curveXValues, curveYValues] = curve(NB_OF_POINTS);
+
+    trace.update(curveXValues, curveYValues);
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, CURVE_AREA, [
+      { trace, color: '#f00', alpha: 1, lineWidth: 0, markerSize: 2 }
+    ]);
+
+    expect(fake.buffers.length).toBe(1);
+    expect(lineDraws(fake)).toEqual([[0, NB_OF_POINTS]]);
+  });
+
+  it('only uploads the points of a level of its path level of detail again when they may have changed', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = curve(NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, CURVE_AREA, items);
+
+    expect(selectionUploads(fake)).toBe(1);
+
+    // Not again for the same level and points.
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, CURVE_AREA, items);
+
+    expect(selectionUploads(fake)).toBe(0);
+
+    // Again for another level (e.g., once zoomed in).
+
+    fake.calls.length = 0;
+
+    renderer.render(createFakeTarget().context, { ...CURVE_AREA, xMin: -0.1, xMax: 0.1 }, items);
+
+    expect(selectionUploads(fake)).toBe(1);
+
+    // Again for the same level if our points may have changed (e.g., if they got updated).
+
+    fake.calls.length = 0;
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, { ...CURVE_AREA, xMin: -0.1, xMax: 0.1 }, items);
+
+    expect(selectionUploads(fake)).toBe(1);
+
+    // In full again for a selection of our (column) level of detail, if our points become sorted.
+
+    const [sortedXValues, sortedYValues] = values(NB_OF_POINTS);
+
+    fake.calls.length = 0;
+
+    trace.update(sortedXValues, sortedYValues);
+    renderer.render(createFakeTarget().context, LOD_AREA, items);
+
+    const expectedPoints = selectedPoints(sortedXValues, sortedYValues, LOD_AREA);
+
+    expect(bufferPoints(fake, fake.buffers.at(-1), expectedPoints.length)).toEqual(expectedPoints);
+    expect(lineDraws(fake)).toEqual([[0, expectedPoints.length / 2 - 1]]);
+  });
+
+  it('uses the given path level of detail, if any, which it then does not count as its memory', () => {
+    const { renderer } = createRenderer();
+    const sharedPathLod = pathLevelOfDetailUtils.create();
+    const sharingTrace = renderer.createTrace(undefined, sharedPathLod);
+    const owningTrace = renderer.createTrace();
+    const [xValues, yValues] = curve(NB_OF_POINTS);
+
+    for (const trace of [sharingTrace, owningTrace]) {
+      trace.update(xValues, yValues);
+      renderer.render(createFakeTarget().context, CURVE_AREA, [
+        { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }
+      ]);
+    }
+
+    expect(sharedPathLod.count).toBe(NB_OF_POINTS);
+    expect(owningTrace.memoryUsage().cpu - sharingTrace.memoryUsage().cpu).toBe(
+      pathLevelOfDetailUtils.memoryUsage(sharedPathLod)
+    );
+
+    // Once disposed of, a trace forgets about the given path level of detail.
+
+    sharingTrace.dispose();
+
+    expect(sharingTrace.memoryUsage().cpu).toBe(0);
+  });
+
+  it('uploads the points of a level of its path level of detail again after its context got restored', () => {
+    const { renderer, fake } = createRenderer();
+    const trace = renderer.createTrace();
+    const [xValues, yValues] = curve(NB_OF_POINTS);
+    const items = [{ trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 }];
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, CURVE_AREA, items);
+
+    fake.canvas?.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
+    fake.canvas?.dispatchEvent(new Event('webglcontextrestored'));
+
+    trace.update(xValues, yValues);
+    renderer.render(createFakeTarget().context, CURVE_AREA, items);
+
+    const expectedPoints = pathLevelPoints(xValues, yValues, CURVE_AREA);
+
+    expect(fake.buffers.length).toBe(4);
+    expect(bufferPoints(fake, fake.buffers[3], expectedPoints.length)).toEqual(expectedPoints);
   });
 
   it('only draws the points that are needed for the line of a trace with gaps among them, which remain gaps', () => {

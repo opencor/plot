@@ -8,7 +8,8 @@ import {
   MIN_NB_OF_POINTS_TO_DROP_LEVELS,
   memoryUsage,
   selectLevel,
-  update
+  update,
+  updatedLevel
 } from './pathLevelOfDetailUtils';
 
 // Some helpers.
@@ -30,16 +31,27 @@ const randomGenerator = (seed: number): (() => number) => {
   };
 };
 
+const NB_OF_LEVELS = 11;
+
+const updateLevels = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array): void => {
+  // Update all of the levels of the given level of detail (see Note #5 of pathLevelOfDetailUtils.ts).
+
+  for (let level = 0; level < NB_OF_LEVELS; ++level) {
+    updatedLevel(lod, xValues, yValues, level);
+  }
+};
+
 const levelOfDetail = (
   xValues: Float64Array,
   yValues: Float64Array,
   count: number = xValues.length
 ): IPathLevelOfDetail => {
-  // Return an up-to-date level of detail for the given points.
+  // Return a level of detail for the given points, with all of its levels up to date.
 
   const res = create();
 
   update(res, xValues, yValues, count);
+  updateLevels(res, xValues, yValues);
 
   return res;
 };
@@ -48,10 +60,15 @@ const points = (values: [number, number][]): [Float64Array, Float64Array] => {
   return [Float64Array.from(values, ([x]) => x), Float64Array.from(values, ([, y]) => y)];
 };
 
-const levelIndices = (lod: IPathLevelOfDetail, level: number): number[] => {
-  // Return the indices of the points of the given level.
+const levelIndices = (
+  lod: IPathLevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  level: number
+): number[] => {
+  // Return the indices of the points of the given level, once up to date.
 
-  const pathLevel = lod.levels[level];
+  const pathLevel = updatedLevel(lod, xValues, yValues, level);
 
   return pathLevel ? Array.from(pathLevel.indices.subarray(0, pathLevel.count)) : [];
 };
@@ -90,8 +107,10 @@ const checkLevels = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Fl
     --lastPoint;
   }
 
+  updateLevels(lod, xValues, yValues);
+
   for (const pathLevel of lod.levels) {
-    const indices = levelIndices(lod, pathLevel.level);
+    const indices = levelIndices(lod, xValues, yValues, pathLevel.level);
     const kept = new Set(indices);
     const scale = 2 ** pathLevel.level;
     const u = (index: number): number => (((xValues[index] as number) - lod.xOrigin) / lod.xSize) * scale;
@@ -228,6 +247,7 @@ const processIncrementally = (
     }
 
     update(lod, xValues, yValues, newCount);
+    updateLevels(lod, xValues, yValues);
 
     res.add(lod.xSize);
 
@@ -278,8 +298,8 @@ describe('update()', () => {
     const lod = levelOfDetail(xValues, yValues);
 
     expect([lod.xOrigin, lod.yOrigin, lod.xSize, lod.ySize]).toEqual([0, 0, 1, 2 ** -6]);
-    expect(levelIndices(lod, 0)).toEqual([0, 2]);
-    expect(levelIndices(lod, 1)).toEqual([0, 1, 2]);
+    expect(levelIndices(lod, xValues, yValues, 0)).toEqual([0, 2]);
+    expect(levelIndices(lod, xValues, yValues, 1)).toEqual([0, 1, 2]);
     expect(lod.levels.length).toBe(11);
 
     checkLevels(lod, xValues, yValues, xValues.length);
@@ -292,7 +312,7 @@ describe('update()', () => {
     // Level 5 has tolerances of 2^-10 times our sizes, i.e. about a third of a pixel for a plot that is about 700
     // pixels wide and high.
 
-    expect(levelIndices(lod, 5).length).toBeLessThan(2000);
+    expect(levelIndices(lod, xValues, yValues, 5).length).toBeLessThan(2000);
 
     checkLevels(lod, xValues, yValues, xValues.length);
   });
@@ -312,7 +332,7 @@ describe('update()', () => {
     ]);
     const lod = levelOfDetail(xValues, yValues);
 
-    expect(levelIndices(lod, 0)).toEqual([0, 1, 2, 3, 5, 6, 7, 8, 9]);
+    expect(levelIndices(lod, xValues, yValues, 0)).toEqual([0, 1, 2, 3, 5, 6, 7, 8, 9]);
 
     checkLevels(lod, xValues, yValues, xValues.length);
   });
@@ -322,7 +342,7 @@ describe('update()', () => {
     const lod = levelOfDetail(xValues, yValues);
 
     expect(lod.xOrigin).toBe(1e9);
-    expect(levelIndices(lod, 5).length).toBeLessThan(1000);
+    expect(levelIndices(lod, xValues, yValues, 5).length).toBeLessThan(1000);
 
     checkLevels(lod, xValues, yValues, xValues.length);
   });
@@ -364,7 +384,7 @@ describe('update()', () => {
     expect(lod.count).toBe(2);
     expect(lod.xSize).toBe(0);
     expect(lod.levels).toEqual([]);
-    expect(selectLevel(lod, 1, 1)).toBeUndefined();
+    expect(selectLevel(lod, xValues, yValues, 1, 1)).toBeUndefined();
   });
 
   it('processes new points incrementally, rebuilding its levels when needed', () => {
@@ -401,7 +421,9 @@ describe('update()', () => {
       expect(lod.levels.length).toBe(freshLod.levels.length);
 
       for (const pathLevel of lod.levels) {
-        expect(levelIndices(lod, pathLevel.level)).toEqual(levelIndices(freshLod, pathLevel.level));
+        expect(levelIndices(lod, xValues, yValues, pathLevel.level)).toEqual(
+          levelIndices(freshLod, xValues, yValues, pathLevel.level)
+        );
       }
     }
   });
@@ -431,13 +453,66 @@ describe('update()', () => {
 
     expect(lod.levels.length).toBe(11);
 
+    // Now that we have enough points, we drop our finest levels, but only once they get updated (see Note #5 and Note
+    // #7 of pathLevelOfDetailUtils.ts).
+
     update(lod, xValues, yValues, nbOfPoints);
+
+    expect(lod.levels.length).toBe(11);
+
+    updateLevels(lod, xValues, yValues);
 
     expect(lod.levels.length).toBeGreaterThan(0);
     expect(lod.levels.length).toBeLessThan(11);
     expect((lod.levels.at(-1)?.count ?? 0) <= MAX_LEVEL_RATIO * nbOfPoints).toBe(true);
 
     checkLevels(lod, xValues, yValues, nbOfPoints);
+  });
+
+  it('only updates a level when it is needed, catching up from where it was', () => {
+    // Process some points bit by bit, like a simulation would (see processIncrementally()), but only update some of our
+    // levels: level 2 every time, level 4 every fifth time, and level 6 only at the end. Each of them should then be
+    // the same as if we processed our points in one go (their range is that of their first points, so that our sizes
+    // are the same either way).
+
+    const random = randomGenerator(246);
+    const [xValues, yValues] = randomWalk(random, 3000, true);
+
+    xValues[0] = -10;
+    yValues[0] = -10;
+    xValues[1] = 10;
+    yValues[1] = 10;
+
+    const lod = create();
+    let count = 0;
+    let step = 0;
+
+    while (count < xValues.length) {
+      const newCount = Math.min(xValues.length, count + 1 + Math.floor(100 * random()));
+
+      invalidate(lod, Math.max(1, count - 1));
+      update(lod, xValues, yValues, newCount);
+
+      updatedLevel(lod, xValues, yValues, 2);
+
+      if (++step % 5 === 0) {
+        updatedLevel(lod, xValues, yValues, 4);
+      }
+
+      count = newCount;
+    }
+
+    // Our other levels haven't processed any point.
+
+    expect(lod.levels.map((level) => level.processedCount > 0)).toEqual(
+      Array.from({ length: NB_OF_LEVELS }, (_value, level) => level === 2 || level === 4)
+    );
+
+    const freshLod = levelOfDetail(xValues, yValues);
+
+    for (const level of [2, 4, 6]) {
+      expect(levelIndices(lod, xValues, yValues, level)).toEqual(levelIndices(freshLod, xValues, yValues, level));
+    }
   });
 });
 
@@ -477,7 +552,9 @@ describe('invalidate()', () => {
       update(lod, xValues, yValues, xValues.length);
 
       for (const pathLevel of freshLod.levels) {
-        expect(levelIndices(lod, pathLevel.level)).toEqual(levelIndices(freshLod, pathLevel.level));
+        expect(levelIndices(lod, xValues, yValues, pathLevel.level)).toEqual(
+          levelIndices(freshLod, xValues, yValues, pathLevel.level)
+        );
       }
     }
   });
@@ -485,16 +562,72 @@ describe('invalidate()', () => {
   it('resets itself if all of its points may have changed', () => {
     const [xValues, yValues] = curve(100);
     const lod = levelOfDetail(xValues, yValues);
+    const version = lod.version;
 
     invalidate(lod, 0);
 
-    expect(lod).toEqual(create());
+    expect({ ...lod, version: 0 }).toEqual(create());
+    expect(lod.version).toBeGreaterThan(version);
 
     // So, it doesn't keep any of its previous points if it now has no points.
 
     update(lod, xValues, yValues, 0);
 
     expect(lod.levels).toEqual([]);
+  });
+});
+
+// version.
+
+describe('version', () => {
+  it('changes whenever its levels may have changed, and only then', () => {
+    const [xValues, yValues] = curve(100);
+    const lod = create();
+    let version = lod.version;
+
+    const versionChanged = (): boolean => {
+      const res = lod.version !== version;
+
+      version = lod.version;
+
+      return res;
+    };
+
+    // When we process new points, but not if we have already processed them.
+
+    update(lod, xValues, yValues, 50);
+
+    expect(versionChanged()).toBe(true);
+
+    update(lod, xValues, yValues, 50);
+
+    expect(versionChanged()).toBe(false);
+
+    // When we process points again, even the same ones.
+
+    invalidate(lod, 49);
+    update(lod, xValues, yValues, 50);
+
+    expect(versionChanged()).toBe(true);
+
+    // When we get reset, even if we then process the same points (since our levels may be different, e.g. if our sizes
+    // end up being different).
+
+    invalidate(lod, 0);
+
+    expect(versionChanged()).toBe(true);
+
+    update(lod, xValues, yValues, 50);
+
+    expect(versionChanged()).toBe(true);
+
+    // When our levels get rebuilt.
+
+    xValues[60] = 100;
+
+    update(lod, xValues, yValues, 100);
+
+    expect(versionChanged()).toBe(true);
   });
 });
 
@@ -512,27 +645,27 @@ describe('selectLevel()', () => {
 
     const lod = levelOfDetail(xValues, yValues);
 
-    expect(selectLevel(lod, 1, 8)?.level).toBe(0);
-    expect(selectLevel(lod, 5, 50)?.level).toBe(0);
-    expect(selectLevel(lod, 0.3, 8)?.level).toBe(1);
-    expect(selectLevel(lod, 1, 0.5)?.level).toBe(2);
-    expect(selectLevel(lod, 0.3, 0.5)?.level).toBe(2);
-    expect(selectLevel(lod, 2 ** -20, 8)?.level).toBe(10);
+    expect(selectLevel(lod, xValues, yValues, 1, 8)?.level).toBe(0);
+    expect(selectLevel(lod, xValues, yValues, 5, 50)?.level).toBe(0);
+    expect(selectLevel(lod, xValues, yValues, 0.3, 8)?.level).toBe(1);
+    expect(selectLevel(lod, xValues, yValues, 1, 0.5)?.level).toBe(2);
+    expect(selectLevel(lod, xValues, yValues, 0.3, 0.5)?.level).toBe(2);
+    expect(selectLevel(lod, xValues, yValues, 2 ** -20, 8)?.level).toBe(10);
   });
 
   it('returns nothing if its tolerances are not small enough or if the given tolerances are not valid', () => {
     const lod = levelOfDetail(xValues, yValues);
 
-    expect(selectLevel(lod, 2 ** -21, 8)).toBeUndefined();
-    expect(selectLevel(lod, 0, 1)).toBeUndefined();
-    expect(selectLevel(lod, 1, Number.NaN)).toBeUndefined();
-    expect(selectLevel(create(), 1, 1)).toBeUndefined();
+    expect(selectLevel(lod, xValues, yValues, 2 ** -21, 8)).toBeUndefined();
+    expect(selectLevel(lod, xValues, yValues, 0, 1)).toBeUndefined();
+    expect(selectLevel(lod, xValues, yValues, 1, Number.NaN)).toBeUndefined();
+    expect(selectLevel(create(), xValues, yValues, 1, 1)).toBeUndefined();
 
     // Nor if the level that we would need has been dropped.
 
     lod.levels.length = 2;
 
-    expect(selectLevel(lod, 0.25, 8)?.level).toBe(1);
-    expect(selectLevel(lod, 0.2, 8)).toBeUndefined();
+    expect(selectLevel(lod, xValues, yValues, 0.25, 8)?.level).toBe(1);
+    expect(selectLevel(lod, xValues, yValues, 0.2, 8)).toBeUndefined();
   });
 });

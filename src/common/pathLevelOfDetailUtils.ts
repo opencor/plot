@@ -32,25 +32,28 @@
 //          cross products (i.e. without any trigonometry).
 // Note #4: a gap (i.e. a point with a non-finite X or Y value) ends our current segment, and consecutive gaps are
 //          replaced with the first of them, so that a gap in the data is drawn as a gap in the trace.
-// Note #5: like our (column) level of detail, our levels are kept up to date incrementally, i.e. if only the last point
-//          onwards of a trace may have changed (e.g., while a simulation is running), then we remove the points of our
-//          levels from the point before it (since it might have become one of our points because of it, see Note #2),
-//          and we resume from the last point that we keep (as an anchor). However, our segments can be long (e.g., for
-//          our coarsest levels), so resuming from our anchor would mean going through many points again. So, we also
-//          keep a snapshot of the state of our levels just before our last point (since it is normally the first point
-//          that may have changed, e.g. while a simulation is running), from which we resume if we can. This means that
-//          updating a trace with N new points costs O(N * number of levels) rather than O(size of the trace * number of
-//          levels).
+// Note #5: our levels are only updated when they are needed (see updatedLevel()), i.e. normally the one level that is
+//          needed to draw our trace, so that we don't spend time updating levels that are not needed (e.g., while a
+//          simulation is running, when our trace gets updated and drawn many times a second). Also, like our (column)
+//          level of detail, a level is kept up to date incrementally, i.e. if only the last point onwards of a trace
+//          may have changed (e.g., while a simulation is running), then we remove the points of the level from the
+//          point before it (since it might have become one of its points because of it, see Note #2), and we resume
+//          from the last point that we keep (as an anchor). However, our segments can be long (e.g., for our coarsest
+//          levels), so resuming from our anchor would mean going through many points again. So, a level also keeps a
+//          snapshot of its state just before our last point (since it is normally the first point that may have
+//          changed), from which it resumes if it can. This means that updating a level with N new points costs O(N)
+//          rather than O(size of the trace), while the first update of a level (e.g., once zoomed in) costs O(size of
+//          the trace).
 // Note #6: our values are relative to an origin (i.e. the first finite point of our trace), so that they keep as much
 //          precision as possible (e.g., if they have a large offset). If the range of our values gets bigger than our
 //          sizes (e.g., while a simulation is running), then we rebuild our levels for all of our points, which only
 //          happens a few times since our sizes are powers of two (e.g., when the range of our values doubles).
 // Note #7: a level that hardly reduces the number of points of a trace (e.g., a fine level for a trace with fewer
 //          points than segments to draw, or for noisy data) would only use memory, so once a trace has at least
-//          MIN_NB_OF_POINTS_TO_DROP_LEVELS points, we drop our finest levels that have more than MAX_LEVEL_RATIO times
-//          its number of points (since our levels have fewer and fewer points as they get coarser). This means that
-//          our levels use, at most, about as much memory as the indices of the points of our trace. A dropped level
-//          only comes back if our levels get rebuilt (see Note #6).
+//          MIN_NB_OF_POINTS_TO_DROP_LEVELS points, we drop a level that has more than MAX_LEVEL_RATIO times its number
+//          of points when we update it, as well as our finer levels (since our levels have more and more points as they
+//          get finer). This means that our levels use, at most, about as much memory as the indices of the points of
+//          our trace. A dropped level only comes back if our levels get rebuilt (see Note #6).
 
 const NB_OF_LEVELS = 11; // Number of levels, i.e. from tolerances of XSize and YSize to tolerances 4^10 times smaller.
 const MIN_SIZE_RATIO = 2 ** -40; // Minimum size relative to our values (e.g., if they are all the same).
@@ -59,14 +62,7 @@ const MIN_SIZE = 2 ** -1000; // Minimum size (e.g., if all of our values are zer
 export const MIN_NB_OF_POINTS_TO_DROP_LEVELS = 16384;
 export const MAX_LEVEL_RATIO = 0.5;
 
-export interface IPathLevel {
-  indices: Int32Array; // Index of our points, i.e. the ends of our segments and the first of our gaps.
-  count: number; // Number of our points.
-  level: number; // Our level, i.e. our tolerances are XSize / 4^level and YSize / 4^level.
-  openEnd: boolean; // Whether our last point is the end of a segment that may still be extended (see update()).
-}
-
-// The state of a level while we process our points (see update()).
+// The state of a level while it processes our points (see processLevel()).
 
 const STATE_NONE = 0; // We have nothing in progress, i.e. we are at the start of our trace or after a gap.
 const STATE_GAP = 1; // We are in a gap.
@@ -86,24 +82,45 @@ export interface IPathLevelState {
   leftY: number;
 }
 
-export interface IPathLevelSnapshot {
-  state: IPathLevelState; // The state of our level just before our last point.
-  count: number; // The number of points of our level just before our last point.
+const newState = (): IPathLevelState => {
+  return {
+    state: STATE_NONE,
+    anchor: -1,
+    anchorU: 0,
+    anchorV: 0,
+    last: -1,
+    maxSquaredDistance: 0,
+    fullCone: true,
+    rightX: 0,
+    rightY: 0,
+    leftX: 0,
+    leftY: 0
+  };
+};
+
+export interface IPathLevel {
+  indices: Int32Array; // Index of our points, i.e. the ends of our segments and the first of our gaps.
+  count: number; // Number of our points.
+  level: number; // Our level, i.e. our tolerances are XSize / 4^level and YSize / 4^level.
+  openEnd: boolean; // Whether our last point is the end of a segment that may still be extended (see reopenLevel()).
+  processedCount: number; // Number of points of our trace that we have processed.
+  snapshotIndex: number; // Index of the point just before which we took our snapshot, or -1 if we don't have any.
+  snapshotState: IPathLevelState; // Our state just before that point (see Note #5 above).
+  snapshotCount: number; // Our number of points just before that point.
 }
 
 export interface IPathLevelOfDetail {
-  count: number; // Number of points that we have processed.
+  count: number; // Number of points that we have taken into account (see update()).
   xOrigin: number; // Origin of our values (see Note #6 above).
   yOrigin: number;
   xSize: number; // Our sizes (see Note #1 above), or 0 if we don't have any (i.e. no finite point).
   ySize: number;
-  xMin: number; // Range of the values of the points that we have processed.
+  xMin: number; // Range of the values of the points that we have taken into account.
   xMax: number;
   yMin: number;
   yMax: number;
   levels: IPathLevel[]; // Our levels, from the coarsest one (i.e. level 0) to the finest one that we have kept.
-  snapshotIndex: number; // Index of our last point when we took our snapshots, or -1 if we don't have any.
-  snapshots: IPathLevelSnapshot[]; // A snapshot of our levels just before our last point (see Note #5 above).
+  version: number; // Incremented whenever our levels may have changed (e.g., so that a consumer can cache them).
 }
 
 export const create = (): IPathLevelOfDetail => {
@@ -118,8 +135,7 @@ export const create = (): IPathLevelOfDetail => {
     yMin: Number.POSITIVE_INFINITY,
     yMax: Number.NEGATIVE_INFINITY,
     levels: [],
-    snapshotIndex: -1,
-    snapshots: []
+    version: 0
   };
 };
 
@@ -135,15 +151,29 @@ export const memoryUsage = (lod: IPathLevelOfDetail): number => {
   return res;
 };
 
+const reset = (lod: IPathLevelOfDetail): void => {
+  // Reset the given level of detail, keeping track of the fact that its levels may have changed.
+
+  const version = lod.version;
+
+  Object.assign(lod, create());
+
+  lod.version = version + 1;
+};
+
 export const invalidate = (lod: IPathLevelOfDetail, from: number): void => {
   // Invalidate the given level of detail from the given point onwards (i.e. those points may have changed), resetting
   // it if all of its points may have changed (so that we get new sizes and that our levels don't keep any of our
   // previous points, e.g. if we now have no points).
 
   if (from <= 0) {
-    Object.assign(lod, create());
+    reset(lod);
   } else {
     lod.count = Math.min(lod.count, from);
+
+    for (const level of lod.levels) {
+      level.processedCount = Math.min(level.processedCount, from);
+    }
   }
 };
 
@@ -165,7 +195,7 @@ const size = (min: number, max: number): number => {
 const rebuild = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Rebuild our sizes for the given points, and reset our levels (see Note #6 above).
 
-  Object.assign(lod, create());
+  reset(lod);
 
   let hasFinitePoint = false;
 
@@ -196,7 +226,16 @@ const rebuild = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float6
   lod.ySize = size(lod.yMin, lod.yMax);
 
   for (let level = 0; level < NB_OF_LEVELS; ++level) {
-    lod.levels.push({ indices: new Int32Array(64), count: 0, level, openEnd: false });
+    lod.levels.push({
+      indices: new Int32Array(64),
+      count: 0,
+      level,
+      openEnd: false,
+      processedCount: 0,
+      snapshotIndex: -1,
+      snapshotState: newState(),
+      snapshotCount: 0
+    });
   }
 };
 
@@ -215,8 +254,8 @@ const reopenLevel = (level: IPathLevel, xValues: Float64Array, yValues: Float64A
   // its open end, if any, and its points from the point before the given one onwards, as well as its last gap, if it
   // ends with one (so that consecutive gaps still get replaced with the first of them), and return the index of the
   // last point that we keep, i.e. the anchor from which to resume, or -1 if we don't keep any point.
-  // Note: the point before a gap is always one of our points (see update()), so if we remove our last gap, then the
-  //       last point that we keep is not a gap.
+  // Note: the point before a gap is always one of our points (see processLevel()), so if we remove our last gap, then
+  //       the last point that we keep is not a gap.
 
   if (level.openEnd) {
     --level.count;
@@ -265,72 +304,86 @@ const startSegment = (state: IPathLevelState, anchor: number, anchorU: number, a
 };
 
 export const update = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
-  // Process the given points from the first one that we haven't processed (see invalidate()).
+  // Take the given points into account, from the first one that we haven't taken into account (see invalidate()), i.e.
+  // make sure that our sizes are big enough for them, and rebuild our levels otherwise (see Note #6 above).
+  // Note: our levels themselves only get updated when they are needed (see Note #5 above and updatedLevel()).
 
   if (lod.count >= count) {
     return;
   }
 
-  // Make sure that we have sizes.
+  ++lod.version;
 
   if (lod.xSize === 0) {
     rebuild(lod, xValues, yValues, count);
+  } else {
+    let { xMin, xMax, yMin, yMax } = lod;
 
-    if (lod.xSize === 0) {
-      lod.count = count;
+    for (let i = lod.count; i < count; ++i) {
+      const x = xValues[i] as number;
+      const y = yValues[i] as number;
 
-      return;
+      if (x - x === 0 && y - y === 0) {
+        if (x < xMin) {
+          xMin = x;
+        }
+
+        if (x > xMax) {
+          xMax = x;
+        }
+
+        if (y < yMin) {
+          yMin = y;
+        }
+
+        if (y > yMax) {
+          yMax = y;
+        }
+      }
+    }
+
+    if (xMax - xMin > lod.xSize || yMax - yMin > lod.ySize) {
+      rebuild(lod, xValues, yValues, count);
+    } else {
+      lod.xMin = xMin;
+      lod.xMax = xMax;
+      lod.yMin = yMin;
+      lod.yMax = yMax;
     }
   }
 
-  // Reopen our levels, i.e. restore their snapshot if we can or remove the points that may change otherwise (see Note
-  // #5 above), and determine the point from which we need to resume.
+  lod.count = count;
+};
 
-  const levels = lod.levels;
-  const nbOfLevels = levels.length;
+const processLevel = (
+  lod: IPathLevelOfDetail,
+  level: IPathLevel,
+  xValues: Float64Array,
+  yValues: Float64Array
+): void => {
+  // Process the points of our trace that the given level hasn't processed (see Note #5 above).
+
+  const count = lod.count;
   const xOrigin = lod.xOrigin;
   const yOrigin = lod.yOrigin;
   const xSize = lod.xSize;
   const ySize = lod.ySize;
-  const states: IPathLevelState[] = [];
-  const resumeFrom: number[] = [];
-  const scales: number[] = [];
-  const snapshotIndex = lod.snapshotIndex;
-  const snapshots = snapshotIndex !== -1 && lod.count >= snapshotIndex ? lod.snapshots : [];
-  let start = lod.count;
+  const scale = 4 ** level.level;
+  let state: IPathLevelState;
+  let start: number;
 
-  for (let levelIndex = 0; levelIndex < nbOfLevels; ++levelIndex) {
-    const level = levels[levelIndex] as IPathLevel;
-    const snapshot = snapshots[levelIndex];
+  // Reopen our level, i.e. restore its snapshot if we can, or remove its points that may change otherwise.
 
-    if (snapshot) {
-      level.count = snapshot.count;
-      level.openEnd = false;
+  if (level.snapshotIndex !== -1 && level.processedCount >= level.snapshotIndex) {
+    level.count = level.snapshotCount;
+    level.openEnd = false;
 
-      states.push({ ...snapshot.state });
-      resumeFrom.push(snapshotIndex);
-      scales.push(4 ** level.level);
+    state = { ...level.snapshotState };
+    start = level.snapshotIndex;
+  } else {
+    const anchor = reopenLevel(level, xValues, yValues, level.processedCount);
 
-      start = Math.min(start, snapshotIndex);
-
-      continue;
-    }
-
-    const anchor = reopenLevel(level, xValues, yValues, lod.count);
-    const state: IPathLevelState = {
-      state: STATE_NONE,
-      anchor: -1,
-      anchorU: 0,
-      anchorV: 0,
-      last: -1,
-      maxSquaredDistance: 0,
-      fullCone: true,
-      rightX: 0,
-      rightY: 0,
-      leftX: 0,
-      leftY: 0
-    };
-    // Resume from our anchor, if any, or from scratch.
+    state = newState();
 
     if (anchor !== -1) {
       startSegment(
@@ -341,152 +394,116 @@ export const update = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: 
       );
     }
 
-    states.push(state);
-    resumeFrom.push(anchor + 1);
-    scales.push(4 ** level.level);
-
-    start = Math.min(start, anchor + 1);
+    start = anchor + 1;
   }
 
   // Process our points.
 
-  let { xMin, xMax, yMin, yMax } = lod;
-
   for (let i = start; i < count; ++i) {
+    // Take a snapshot of our level just before our last point.
+
+    if (i === count - 1) {
+      level.snapshotIndex = i;
+      level.snapshotState = { ...state };
+      level.snapshotCount = level.count;
+    }
+
     const x = xValues[i] as number;
     const y = yValues[i] as number;
-    const gap = x - x !== 0 || y - y !== 0;
 
-    // Rebuild our levels if our point makes the range of our values bigger than our sizes (see Note #6 above).
+    if (x - x !== 0 || y - y !== 0) {
+      // A gap ends our segment, if any, and consecutive gaps are replaced with the first of them (see Note #4 above).
 
-    if (!gap) {
-      if (x < xMin) {
-        xMin = x;
+      if (state.state === STATE_SEGMENT && state.last !== state.anchor) {
+        appendIndex(level, state.last);
       }
 
-      if (x > xMax) {
-        xMax = x;
+      if (state.state !== STATE_GAP) {
+        appendIndex(level, i);
+
+        state.state = STATE_GAP;
       }
 
-      if (y < yMin) {
-        yMin = y;
-      }
-
-      if (y > yMax) {
-        yMax = y;
-      }
-
-      if (xMax - xMin > xSize || yMax - yMin > ySize) {
-        rebuild(lod, xValues, yValues, count);
-        update(lod, xValues, yValues, count);
-
-        return;
-      }
+      continue;
     }
 
     const u = (x - xOrigin) / xSize;
     const v = (y - yOrigin) / ySize;
 
-    // Take a snapshot of our levels just before our last point (see Note #5 above).
-    // Note: all of our levels resume from our last point at the latest, so they are all up to date at this point.
+    if (state.state !== STATE_SEGMENT) {
+      // Our point is the first point of our trace or the first point after a gap, so it is our anchor.
 
-    if (i === count - 1) {
-      lod.snapshotIndex = i;
-      lod.snapshots = states.map((state: IPathLevelState, levelIndex: number) => ({
-        state: { ...state },
-        count: (levels[levelIndex] as IPathLevel).count
-      }));
+      appendIndex(level, i);
+      startSegment(state, i, u, v);
+
+      continue;
     }
 
-    for (let levelIndex = 0; levelIndex < nbOfLevels; ++levelIndex) {
-      if (i < (resumeFrom[levelIndex] as number)) {
-        continue;
-      }
+    // Check whether our point can be the end of our segment (see Note #2 and Note #3 above).
 
-      const level = levels[levelIndex] as IPathLevel;
-      const state = states[levelIndex] as IPathLevelState;
+    let dx = (u - state.anchorU) * scale;
+    let dy = (v - state.anchorV) * scale;
+    let squaredDistance = dx * dx + dy * dy;
 
-      if (gap) {
-        // A gap ends our segment, if any, and consecutive gaps are replaced with the first of them (see Note #4).
-
-        if (state.state === STATE_SEGMENT && state.last !== state.anchor) {
-          appendIndex(level, state.last);
-        }
-
-        if (state.state !== STATE_GAP) {
-          appendIndex(level, i);
-
-          state.state = STATE_GAP;
-        }
-
-        continue;
-      }
-
-      if (state.state !== STATE_SEGMENT) {
-        // Our point is the first point of our trace or the first point after a gap, so it is our anchor.
-
-        appendIndex(level, i);
-        startSegment(state, i, u, v);
-
-        continue;
-      }
-
-      // Check whether our point can be the end of our segment (see Note #2 and Note #3 above).
-
-      const scale = scales[levelIndex] as number;
-      let dx = (u - state.anchorU) * scale;
-      let dy = (v - state.anchorV) * scale;
-      let squaredDistance = dx * dx + dy * dy;
-
-      if (!isSegmentEnd(state, dx, dy, squaredDistance)) {
-        // Our previous point becomes the end of our segment and the anchor of our next segment, which our point is
-        // then always the end of (since our cone allows all directions and nothing is further than our point).
-
-        appendIndex(level, state.last);
-        startSegment(
-          state,
-          state.last,
-          ((xValues[state.last] as number) - xOrigin) / xSize,
-          ((yValues[state.last] as number) - yOrigin) / ySize
-        );
-
-        dx = (u - state.anchorU) * scale;
-        dy = (v - state.anchorV) * scale;
-        squaredDistance = dx * dx + dy * dy;
-      }
-
-      extendSegment(state, i, dx, dy, squaredDistance);
-    }
-  }
-
-  // Add the end of the segment of our levels, if any, as an open end (since it may still be extended, see
-  // reopenLevel()).
-
-  for (let levelIndex = 0; levelIndex < nbOfLevels; ++levelIndex) {
-    const state = states[levelIndex] as IPathLevelState;
-
-    if (state.state === STATE_SEGMENT && state.last !== state.anchor) {
-      const level = levels[levelIndex] as IPathLevel;
+    if (!isSegmentEnd(state, dx, dy, squaredDistance)) {
+      // Our previous point becomes the end of our segment and the anchor of our next segment, which our point is then
+      // always the end of (since our cone allows all directions and nothing is further than our point).
 
       appendIndex(level, state.last);
+      startSegment(
+        state,
+        state.last,
+        ((xValues[state.last] as number) - xOrigin) / xSize,
+        ((yValues[state.last] as number) - yOrigin) / ySize
+      );
 
-      level.openEnd = true;
+      dx = (u - state.anchorU) * scale;
+      dy = (v - state.anchorV) * scale;
+      squaredDistance = dx * dx + dy * dy;
+    }
+
+    extendSegment(state, i, dx, dy, squaredDistance);
+  }
+
+  // Add the end of our segment, if any, as an open end (since it may still be extended, see reopenLevel()).
+
+  if (state.state === STATE_SEGMENT && state.last !== state.anchor) {
+    appendIndex(level, state.last);
+
+    level.openEnd = true;
+  }
+
+  level.processedCount = count;
+};
+
+export const updatedLevel = (
+  lod: IPathLevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  levelNumber: number
+): IPathLevel | undefined => {
+  // Return the given level, once up to date for the points that we have taken into account (see Note #5 above), unless
+  // we don't have it (e.g., if it got dropped, see Note #7 above).
+
+  const level = lod.levels[levelNumber];
+
+  if (!level) {
+    return undefined;
+  }
+
+  if (level.processedCount < lod.count) {
+    processLevel(lod, level, xValues, yValues);
+
+    // Drop our level, and our finer levels, if it hardly reduces the number of points of our trace (see Note #7 above).
+
+    if (lod.count >= MIN_NB_OF_POINTS_TO_DROP_LEVELS && level.count > MAX_LEVEL_RATIO * lod.count) {
+      lod.levels.length = levelNumber;
+
+      return undefined;
     }
   }
 
-  lod.count = count;
-  lod.xMin = xMin;
-  lod.xMax = xMax;
-  lod.yMin = yMin;
-  lod.yMax = yMax;
-
-  // Drop our finest levels that hardly reduce the number of points of our trace (see Note #7 above).
-
-  if (count >= MIN_NB_OF_POINTS_TO_DROP_LEVELS) {
-    while (levels.length > 0 && (levels.at(-1) as IPathLevel).count > MAX_LEVEL_RATIO * count) {
-      levels.pop();
-    }
-  }
+  return level;
 };
 
 const isSegmentEnd = (state: IPathLevelState, dx: number, dy: number, squaredDistance: number): boolean => {
@@ -563,12 +580,14 @@ const extendSegment = (
 
 export const selectLevel = (
   lod: IPathLevelOfDetail,
+  xValues: Float64Array,
+  yValues: Float64Array,
   maxXTolerance: number,
   maxYTolerance: number
 ): IPathLevel | undefined => {
-  // Return our coarsest level which tolerances are no bigger than the given ones, if any (in which case all of the
-  // points of our trace should be used).
-  // Note: our level of detail must be up to date (see update()).
+  // Return our coarsest level which tolerances are no bigger than the given ones, once up to date (see updatedLevel()),
+  // if any (otherwise, all of the points of our trace should be used).
+  // Note: our level of detail must have taken all of the points of our trace into account (see update()).
 
   if (lod.xSize === 0 || !(maxXTolerance > 0) || !(maxYTolerance > 0)) {
     return undefined;
@@ -580,5 +599,5 @@ export const selectLevel = (
     Math.ceil(0.5 * Math.log2(lod.ySize / maxYTolerance))
   );
 
-  return lod.levels[level];
+  return updatedLevel(lod, xValues, yValues, level);
 };
