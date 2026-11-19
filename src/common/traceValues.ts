@@ -115,9 +115,13 @@ export const valuesStatistics = (values: Float64Array, previous?: IValuesStatist
 //          values, so that their statistics (see valuesStatistics()) and our GPU plot renderer only need to process
 //          their new values too.
 // Note #2: we create a new buffer whenever some values are not a continuation of the previous ones, so that we never
-//          present new values as a continuation of old ones. Also, a new buffer has the capacity of the buffer of the
-//          values (e.g., live data, which buffer has room for all the data of a simulation run), so that it never needs
-//          to grow (which would require all of our values to be processed again).
+//          present new values as a continuation of old ones. Also, a new buffer has room for twice as many values as we
+//          have (but no more than what is left of the buffer of our values, e.g. live data, which buffer has room for
+//          all the data of a simulation run), and it doubles in size when it needs to grow. Growing our buffer means
+//          that our logarithm is not a continuation of the previous one anymore (so that whatever uses it has to
+//          process all of it again, see Note #1), but this only happens a few times (e.g., during a simulation run) and
+//          it avoids allocating much more memory than needed if the buffer of our values is shared (e.g., if the values
+//          of all of our traces are views of one big buffer).
 // Note #3: a non-positive value has no logarithm, so it becomes NaN (i.e. a gap in a trace).
 
 export interface ILogValues {
@@ -133,13 +137,23 @@ export const logValues = (values: Float64Array, previous?: ILogValues): ILogValu
   let buffer: Float64Array;
   let start: number;
 
-  if (previous && isContinuationOf(values, previous.source) && nbOfValues <= previous.buffer.length) {
-    buffer = previous.buffer;
+  const maxCapacity = (values.buffer.byteLength - values.byteOffset) / Float64Array.BYTES_PER_ELEMENT;
+
+  if (previous && isContinuationOf(values, previous.source)) {
+    // Our values are a continuation of the previous ones, so only convert their last value onwards, in a bigger buffer
+    // if needed (with what we have already converted).
+
     start = Math.max(0, previous.source.length - 1);
+
+    if (nbOfValues <= previous.buffer.length) {
+      buffer = previous.buffer;
+    } else {
+      buffer = new Float64Array(Math.min(maxCapacity, Math.max(nbOfValues, 2 * previous.buffer.length)));
+
+      buffer.set(previous.buffer.subarray(0, start));
+    }
   } else {
-    buffer = new Float64Array(
-      Math.max(nbOfValues, (values.buffer.byteLength - values.byteOffset) / Float64Array.BYTES_PER_ELEMENT)
-    );
+    buffer = new Float64Array(Math.min(maxCapacity, Math.max(1, 2 * nbOfValues)));
     start = 0;
   }
 

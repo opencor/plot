@@ -213,13 +213,35 @@ describe('logValues()', () => {
     ]);
   });
 
-  it('uses a buffer with the capacity of the buffer of the values', () => {
+  it('uses a buffer with room for twice as many values, but no more than what is left of the buffer of the values', () => {
     const buffer = new Float64Array(10);
     const res = logValues(view(buffer, 3, 2));
 
-    expect(res.buffer.length).toBe(8);
+    expect(res.buffer.length).toBe(6);
     expect(res.values.length).toBe(3);
     expect(res.values.buffer).toBe(res.buffer.buffer);
+
+    expect(logValues(view(buffer, 3, 7)).buffer.length).toBe(3);
+
+    // So, the values of a view of a big (e.g., shared) buffer don't get a buffer as big as what is left of that buffer.
+
+    expect(logValues(view(new Float64Array(1000000), 1000)).buffer.length).toBe(2000);
+  });
+
+  it('doubles the size of its buffer if a continuation needs more room, keeping what it has already converted', () => {
+    const buffer = new Float64Array([1, 10, 100, 1000, 10000, 100000, 1000000, 1]);
+    const previous = logValues(view(buffer, 2));
+
+    expect(previous.buffer.length).toBe(4);
+
+    buffer[0] = 1e5; // Not expected to change, so its logarithm shouldn't get updated (see below).
+
+    const res = logValues(view(buffer, 6), previous);
+
+    expect(res.buffer).not.toBe(previous.buffer);
+    expect(res.buffer.length).toBe(8);
+    expect(Array.from(res.values)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(isContinuationOf(res.values, previous.values)).toBe(false);
   });
 
   it('carries on from the logarithm of some previous values, if some values are a continuation of them', () => {
