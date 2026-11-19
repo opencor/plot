@@ -471,8 +471,10 @@ const memoryUsage = (): IPlotMemoryUsage => {
 
   for (const arrays of Object.values(plottedArrays)) {
     for (const arrayValues of arrays.values()) {
-      for (const plotted of arrayValues.values()) {
-        res.logValues += plotted.log?.buffer.byteLength ?? 0;
+      for (const offsetValues of arrayValues.values()) {
+        for (const plotted of offsetValues) {
+          res.logValues += plotted.log?.buffer.byteLength ?? 0;
+        }
       }
     }
   }
@@ -5285,11 +5287,13 @@ const actualValue = (axisKey: AxisKey, value: number): number => {
 //          running), typically with a few more values each time, so we process our values incrementally (see
 //          traceValues.ts), i.e. updating a trace with N new values costs O(N) rather than O(number of values).
 // Note #2: our traces may share their values (e.g., their X values), so we keep track of the values that we plot per
-//          array of actual values (identified by its buffer and offset, so that a continuation of it, see
-//          traceValues.ts, is identified as the same array) rather than per trace. This means that shared values only
-//          get processed once and that their logarithm only gets computed (and stored) once. Also, we only keep track
-//          of the arrays that we are plotting, so that we don't keep the logarithm of values that we don't plot
-//          anymore.
+//          array of actual values (identified by its buffer, offset, and length) rather than per trace. This means that
+//          shared values only get processed once and that their logarithm only gets computed (and stored) once. An
+//          array that is a continuation of one that we processed the last time our data got updated (see
+//          traceValues.ts) carries on from it, unless another array has already done so (e.g., if two of our traces
+//          have values of different lengths from the same buffer and offset), in which case it gets processed from
+//          scratch, so that each array gets what it should. Also, we only keep track of the arrays that we are
+//          plotting, so that we don't keep the logarithm of values that we don't plot anymore.
 
 interface IPlottedAxisValues {
   source: Float64Array | undefined; // The actual values that we last processed.
@@ -5299,7 +5303,7 @@ interface IPlottedAxisValues {
 }
 
 type IPlottedValues = Record<AxisKey, IPlottedAxisValues>;
-type IPlottedArrays = Map<ArrayBufferLike, Map<number, IPlottedAxisValues>>; // By buffer and then by offset.
+type IPlottedArrays = Map<ArrayBufferLike, Map<number, IPlottedAxisValues[]>>; // By buffer and then by offset.
 
 let plottedValues: IPlottedValues[] = []; // The values that we plot for each of our traces.
 let plottedArrays: Record<AxisKey, IPlottedArrays> = { x: new Map(), y: new Map() }; // See Note #2 above.
@@ -5321,16 +5325,39 @@ const plotValues = (
     arrays.set(values.buffer, arrayValues);
   }
 
-  // Reuse what we have already done for the given values, if they have already been processed (i.e. if another of our
-  // traces shares them), or carry on from what we did for them the last time our data got updated, if anything.
+  let offsetValues = arrayValues.get(values.byteOffset);
 
-  let res = arrayValues.get(values.byteOffset);
+  if (!offsetValues) {
+    offsetValues = [];
 
-  if (res?.source === values) {
-    return res;
+    arrayValues.set(values.byteOffset, offsetValues);
   }
 
-  res ??= previousArrays.get(values.buffer)?.get(values.byteOffset) ?? {
+  // Reuse what we have already done for the given values, if they have already been processed (i.e. if another of our
+  // traces shares them, i.e. has values from the same buffer, offset, and of the same length).
+
+  const processedValues = offsetValues.find((plotted: IPlottedAxisValues) => plotted.source?.length === values.length);
+
+  if (processedValues) {
+    return processedValues;
+  }
+
+  // Carry on from what we did the last time our data got updated for the longest values of which the given values are
+  // a continuation, if any and if no other values have already done so, or start from scratch (see Note #2 above).
+
+  let res: IPlottedAxisValues | undefined;
+
+  for (const plotted of previousArrays.get(values.buffer)?.get(values.byteOffset) ?? []) {
+    if (
+      (plotted.source?.length ?? 0) <= values.length &&
+      (plotted.source?.length ?? 0) > (res?.source?.length ?? -1) &&
+      !offsetValues.includes(plotted)
+    ) {
+      res = plotted;
+    }
+  }
+
+  res ??= {
     source: undefined,
     values,
     log: undefined,
@@ -5348,7 +5375,7 @@ const plotValues = (
   res.source = values;
   res.statistics = valuesStatistics(res.values, res.statistics);
 
-  arrayValues.set(values.byteOffset, res);
+  offsetValues.push(res);
 
   return res;
 };
