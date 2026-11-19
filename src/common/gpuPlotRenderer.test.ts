@@ -425,6 +425,28 @@ describe('isPrecise()', () => {
     expect(isPrecise({ ...AREA, xMin: 1, xMax: 1 }, [item])).toBe(false);
     expect(isPrecise({ ...AREA, yMin: 1, yMax: 1 }, [item])).toBe(false);
   });
+
+  it('determines whether some of our points would be mistaken for gaps', () => {
+    // Our X range is huge, so that our 32-bit floats are precise enough, but a point (relative to our origin) that is
+    // beyond our gap threshold would be mistaken for a gap by our vertex shader (see Note #6 of gpuPlotRenderer.ts).
+
+    const { renderer } = createRenderer();
+    const trace = renderer.createTrace();
+    const item = { trace, color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 };
+    const area = { ...AREA, xMin: 0, xMax: 1e40 };
+
+    trace.update(Float64Array.from([0, 5e37]), Float64Array.from([0, 1]));
+
+    expect(isPrecise(area, [item])).toBe(true);
+
+    trace.update(Float64Array.from([0, 2e38]), Float64Array.from([0, 1]));
+
+    expect(isPrecise(area, [item])).toBe(false);
+
+    trace.update(Float64Array.from([0, 1]), Float64Array.from([0, -2e38]));
+
+    expect(isPrecise({ ...area, yMin: -1e40, yMax: 1e40 }, [item])).toBe(false);
+  });
 });
 
 // render().
@@ -723,6 +745,19 @@ describe('render()', () => {
 
     expect(target1.drawImageCalls.map((call) => call[5])).toEqual([30]);
     expect(target2.drawImageCalls).toEqual([]);
+  });
+
+  it('cancels the pending copy to a canvas even if it renders nothing for it', async () => {
+    const { renderer } = createRenderer();
+    const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
+    const target = createFakeTarget();
+
+    renderer.render(target.context, AREA, items);
+    renderer.render(target.context, { ...AREA, width: 0 }, items);
+
+    await Promise.resolve();
+
+    expect(target.drawImageCalls).toEqual([]);
   });
 
   it('parses a colour only once', () => {

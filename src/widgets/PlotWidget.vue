@@ -1731,6 +1731,14 @@ const exportToCsv = async (): Promise<void> => {
         emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
 
         await common.sleep(common.NO_DELAY);
+
+        // Stop exporting if we got unmounted in the meantime (e.g., if our plot got closed).
+
+        if (isUnmounted) {
+          successfulExport = false;
+
+          return;
+        }
       }
     }
 

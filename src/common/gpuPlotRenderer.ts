@@ -428,7 +428,8 @@ const axisFactors = (area: IGpuPlotArea): [number, number] => {
 export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean => {
   // Return whether our data is precise enough to be rendered with the given ranges, i.e. whether the error on the
   // position of a point due to our use of 32-bit floats would be negligible (which may not be the case if we are zoomed
-  // in a lot).
+  // in a lot), and whether none of our (finite) points would be mistaken for a gap by our vertex shader (see Note #6
+  // above), in which case it would not get drawn.
 
   const [xFactor, yFactor] = axisFactors(area);
 
@@ -441,7 +442,9 @@ export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean =>
 
     return (
       trace.maxAbsX() * FLOAT32_EPSILON * Math.abs(xFactor) <= MAX_PRECISION_ERROR &&
-      trace.maxAbsY() * FLOAT32_EPSILON * Math.abs(yFactor) <= MAX_PRECISION_ERROR
+      trace.maxAbsY() * FLOAT32_EPSILON * Math.abs(yFactor) <= MAX_PRECISION_ERROR &&
+      trace.maxAbsX() < Number(GAP_THRESHOLD) &&
+      trace.maxAbsY() < Number(GAP_THRESHOLD)
     );
   });
 };
@@ -1130,6 +1133,11 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     // Note #3: what we render only gets copied to the given canvas once the current task is done with rendering (see
     //          Note #8 above).
 
+    // Cancel our pending copy to the given canvas, if any, since it is being redrawn (see Note #8 above), even if we
+    // end up not rendering anything for it.
+
+    cancelRender(target);
+
     if (pointCounts) {
       pointCounts.nbOfPoints = 0;
       pointCounts.nbOfDrawnPoints = 0;
@@ -1371,9 +1379,6 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     context.disable(context.SCISSOR_TEST);
 
     // Copy our region to the given canvas, once the current task is done with rendering (see Note #8 above).
-    // Note: our copy replaces any pending copy to the given canvas, since the given canvas has been redrawn since.
-
-    cancelRender(target);
 
     if (!pendingCopies.length) {
       queueMicrotask(flush);
