@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   create,
-  type IPathLevelOfDetail,
+  type PathLevelOfDetail,
   invalidate,
   MAX_LEVEL_RATIO,
   MIN_NB_OF_POINTS_TO_DROP_LEVELS,
@@ -33,7 +33,7 @@ const randomGenerator = (seed: number): (() => number) => {
 
 const NB_OF_LEVELS = 11;
 
-const updateLevels = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array): void => {
+const updateLevels = (lod: PathLevelOfDetail, xValues: Float64Array, yValues: Float64Array): void => {
   // Update all of the levels of the given level of detail (see Note #5 of pathLevelOfDetailUtils.ts).
 
   for (let level = 0; level < NB_OF_LEVELS; ++level) {
@@ -45,7 +45,7 @@ const levelOfDetail = (
   xValues: Float64Array,
   yValues: Float64Array,
   count: number = xValues.length
-): IPathLevelOfDetail => {
+): PathLevelOfDetail => {
   // Return a level of detail for the given points, with all of its levels up to date.
 
   const res = create();
@@ -61,7 +61,7 @@ const points = (values: [number, number][]): [Float64Array, Float64Array] => {
 };
 
 const levelIndices = (
-  lod: IPathLevelOfDetail,
+  lod: PathLevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   level: number
@@ -77,7 +77,7 @@ const isFinitePoint = (xValues: Float64Array, yValues: Float64Array, index: numb
   return Number.isFinite(xValues[index]) && Number.isFinite(yValues[index]);
 };
 
-const checkLevels = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
+const checkLevels = (lod: PathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Check that each of our levels has the points that it should have (see Note #1 and Note #4 of
   // pathLevelOfDetailUtils.ts), i.e. that it starts with our first point and ends with our last point (or the first
   // point of our last gap), that it replaces each gap with its first point and has the points before and after it, and
@@ -216,7 +216,7 @@ const randomWalk = (random: () => number, nbOfPoints: number, gaps: boolean): [F
 
 const processIncrementally = (
   random: () => number,
-  lod: IPathLevelOfDetail,
+  lod: PathLevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   check: boolean
@@ -606,7 +606,7 @@ describe('invalidate()', () => {
 
     invalidate(lod, 0);
 
-    expect({ ...lod, version: 0, xValues: undefined, yValues: undefined } as IPathLevelOfDetail).toEqual(create());
+    expect({ ...lod, version: 0, xValues: undefined, yValues: undefined } as PathLevelOfDetail).toEqual(create());
     expect(lod.version).toBeGreaterThan(version);
 
     // So, it doesn't keep any of its previous points if it now has no points.

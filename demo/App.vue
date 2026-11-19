@@ -172,12 +172,12 @@
 import * as vue from 'vue';
 
 import OpenCORPlot, {
-  type IContextMenuItem,
-  type IPlotContextMenuEvent,
-  type IPlotCsvExportEvent,
-  type IPlotData,
-  type IPlotMargins,
-  type IPlotMemoryUsage,
+  type ContextMenuItem,
+  type PlotContextMenuEvent,
+  type PlotCsvExportEvent,
+  type PlotData,
+  type PlotMargins,
+  type PlotMemoryUsage,
   type PlotActiveRenderer,
   type PlotRenderer,
   type PlotTheme
@@ -267,10 +267,10 @@ const tooManyPoints = (instances: number, traces: number, points: number): boole
   return instances * traces * points > MAX_TOTAL_NB_OF_POINTS;
 };
 
-const datasets = vue.shallowRef<IPlotData[]>([]);
+const datasets = vue.shallowRef<PlotData[]>([]);
 const dataStatus = vue.ref<string>('');
 const dataMemoryStatus = vue.ref<string>(''); // Memory used by our data.
-let generatedDatasets: IPlotData[] = [];
+let generatedDatasets: PlotData[] = [];
 let dataGeneration = 0;
 
 const nextPaint = (): Promise<void> => {
@@ -344,7 +344,7 @@ let liveTotalNbOfPoints = 0; // Number of points per trace that we will have plo
 const liveStatus = vue.ref<string>('');
 const liveRunning = vue.ref<boolean>(false); // Whether a run is going, i.e. some of our data is yet to be plotted.
 
-const xAxisRange = (data: IPlotData): [number, number] => {
+const xAxisRange = (data: PlotData): [number, number] => {
   // Return the range of the X values of all the traces of the given data.
 
   let min = Number.POSITIVE_INFINITY;
@@ -365,7 +365,7 @@ const xAxisRange = (data: IPlotData): [number, number] => {
   return min <= max ? [min, max] : [0, 1];
 };
 
-const liveDatasets = (nbOfPoints: number, xAxisRanges: ([number, number] | undefined)[]): IPlotData[] => {
+const liveDatasets = (nbOfPoints: number, xAxisRanges: ([number, number] | undefined)[]): PlotData[] => {
   // Return our generated data, but with only the given number of points per trace, making sure that our traces still
   // share their X values (since our GPU plot renderer handles each trace separately anyway, but it's what a consumer
   // would do).
@@ -507,10 +507,10 @@ const gridStyle = vue.computed(() => {
 // Note: an instance always emits its natural margins (i.e. the margins that it needs), whether or not it is given some
 //       shared margins (see updateMarginsAsync() in PlotWidget.vue).
 
-const naturalMargins: (IPlotMargins | undefined)[] = []; // Natural margins of our instances.
-const margins = vue.shallowRef<IPlotMargins | undefined>(); // Shared margins of our instances.
+const naturalMargins: (PlotMargins | undefined)[] = []; // Natural margins of our instances.
+const margins = vue.shallowRef<PlotMargins | undefined>(); // Shared margins of our instances.
 
-const onMarginsUpdated = (newMargins: IPlotMargins, index: number): void => {
+const onMarginsUpdated = (newMargins: PlotMargins, index: number): void => {
   // Keep track of the natural margins of the given instance and update our shared margins, if needed (i.e. only if
   // they have changed, so that our instances don't get relaid out for nothing).
 
@@ -553,7 +553,7 @@ const updateDrawingStatus = (): void => {
   const counts = new Map<PlotActiveRenderer, number>();
   let nbOfPoints = 0;
   let nbOfDrawnPoints = 0;
-  const memoryUsage: IPlotMemoryUsage = { levelOfDetail: 0, logValues: 0, gpu: 0 };
+  const memoryUsage: PlotMemoryUsage = { levelOfDetail: 0, logValues: 0, gpu: 0 };
 
   for (const plot of plotRefs.slice(0, datasets.value.length)) {
     if (plot) {
@@ -671,7 +671,7 @@ const zoomSteps = (zoom: number): number => {
   return Math.round((200 / BENCHMARK_WHEEL_DELTA) * Math.log(zoom));
 };
 
-interface IBenchmarkResult {
+interface BenchmarkResult {
   fps: string;
   redraw: string;
 }
@@ -679,7 +679,7 @@ interface IBenchmarkResult {
 const benchmarking = vue.ref<boolean>(false); // Whether we are running our benchmark.
 const benchmarkInteraction = vue.ref<string>(''); // Name of the interaction that we are running, if any.
 const benchmarkResizeScale = vue.ref<number>(1); // Scale of our grid of instances (see our resize interaction).
-const benchmarkResults = vue.ref<Record<string, IBenchmarkResult>>({}); // Results of our interactions, by name.
+const benchmarkResults = vue.ref<Record<string, BenchmarkResult>>({}); // Results of our interactions, by name.
 let benchmarkRun = 0; // Number of the current run of our benchmark, so that a stopped run can tell that it was stopped.
 let benchmarkFrameStartId = 0; // Id of our next onFrameStart() callback.
 let benchmarkFrameEndId = 0; // Id of our next onFrameEnd() callback.
@@ -735,7 +735,7 @@ const sendKeyPress = (key: string): void => {
   }
 };
 
-const runInteraction = (interact: (frame: number) => void): Promise<IBenchmarkResult | undefined> => {
+const runInteraction = (interact: (frame: number) => void): Promise<BenchmarkResult | undefined> => {
   // Run the given interaction every frame for BENCHMARK_DURATION, and return our frame rate and the redraw time of our
   // instances, or nothing if our benchmark got stopped (see Note #2 above).
 
@@ -825,7 +825,7 @@ const runBenchmark = async (): Promise<void> => {
 
   const run = benchmarkRun;
   const isStopped = (): boolean => run !== benchmarkRun;
-  const record = (name: string, result: IBenchmarkResult | undefined): boolean => {
+  const record = (name: string, result: BenchmarkResult | undefined): boolean => {
     // Record the result of the given interaction, reset the zoom of our instances, and return whether we can carry on.
 
     sendKeyPress('0');
@@ -1018,7 +1018,7 @@ const onLoseWebGlContext = (): void => {
 
 const csvExportStatus = vue.ref<string>('');
 
-const onCsvExport = (event: IPlotCsvExportEvent): void => {
+const onCsvExport = (event: PlotCsvExportEvent): void => {
   if (event.type === 'started') {
     csvExportStatus.value = 'Exporting...';
   } else if (event.type === 'progress') {
@@ -1081,16 +1081,16 @@ const statusRows = vue.computed(() => [
 
 // Custom context menu, which lists our items (including those of submenus) as buttons.
 
-interface ICustomMenuItem {
+interface CustomMenuItem {
   label: string;
   command?: () => void;
 }
 
 const customMenuRef = vue.useTemplateRef<HTMLElement>('customMenuRef');
-const customMenu = vue.ref<{ x: number; y: number; items: ICustomMenuItem[]; instance: number } | null>(null);
+const customMenu = vue.ref<{ x: number; y: number; items: CustomMenuItem[]; instance: number } | null>(null);
 
-const flattenedItems = (items: IContextMenuItem[], prefix: string = ''): ICustomMenuItem[] => {
-  return items.flatMap((item: IContextMenuItem): ICustomMenuItem[] => {
+const flattenedItems = (items: ContextMenuItem[], prefix: string = ''): CustomMenuItem[] => {
+  return items.flatMap((item: ContextMenuItem): CustomMenuItem[] => {
     if ('separator' in item) {
       return [{ label: '' }];
     }
@@ -1101,7 +1101,7 @@ const flattenedItems = (items: IContextMenuItem[], prefix: string = ''): ICustom
   });
 };
 
-const onContextMenu = async (event: IPlotContextMenuEvent, instance: number): Promise<void> => {
+const onContextMenu = async (event: PlotContextMenuEvent, instance: number): Promise<void> => {
   customMenu.value = { x: event.clientX, y: event.clientY, items: flattenedItems(event.items), instance };
 
   window.addEventListener('blur', hideCustomMenu);

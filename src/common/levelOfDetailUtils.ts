@@ -55,13 +55,13 @@ const BLOCK_SIZE = 16;
 
 export const MIN_POINTS_PER_COLUMN = 8; // Minimum number of (visible) points per column for us to be worth using.
 
-interface ILevel {
+interface Level {
   min: Int32Array; // Index of the finite point with the minimum Y value of a block, or -1 if there is none.
   max: Int32Array; // Index of the finite point with the maximum Y value of a block, or -1 if there is none.
   gap: Uint8Array; // Whether a block has a gap, i.e. a point with a non-finite X or Y value.
 }
 
-export interface ISelection {
+export interface LevelOfDetailSelection {
   indices: Int32Array; // Index of our selected points.
   nbOfPoints: number; // Number of our selected points.
   firstChanged: number; // Number of leading selected points that are the same as in our previous selection.
@@ -74,17 +74,17 @@ export interface ISelection {
   number: number; // Number of our selection, i.e. of the selections made by our level of detail (see Note #7 above).
 }
 
-export interface ILevelOfDetail {
+export interface LevelOfDetail {
   xValues: Float64Array | undefined; // X values that we were last updated with (see Note #9 above).
   yValues: Float64Array | undefined; // Y values that we were last updated with.
   count: number; // Number of points that we have processed.
   sortedLength: number; // Number of leading points whose finite points have sorted X values (see Note #8 above).
-  levels: ILevel[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
-  selection: ISelection | undefined; // Our last selection of points (see selectPoints()).
+  levels: Level[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
+  selection: LevelOfDetailSelection | undefined; // Our last selection of points (see selectPoints()).
   nbOfSelections: number; // Number of selections that we have made (see Note #7 above).
 }
 
-export const create = (): ILevelOfDetail => {
+export const create = (): LevelOfDetail => {
   return {
     xValues: undefined,
     yValues: undefined,
@@ -96,7 +96,7 @@ export const create = (): ILevelOfDetail => {
   };
 };
 
-export const memoryUsage = (lod: ILevelOfDetail): number => {
+export const memoryUsage = (lod: LevelOfDetail): number => {
   // Return the number of bytes used by the given level of detail, i.e. by its blocks and its selection.
 
   let res = lod.selection?.indices.byteLength ?? 0;
@@ -108,7 +108,7 @@ export const memoryUsage = (lod: ILevelOfDetail): number => {
   return res;
 };
 
-export const invalidate = (lod: ILevelOfDetail, from: number): void => {
+export const invalidate = (lod: LevelOfDetail, from: number): void => {
   // Invalidate the given level of detail from the given point onwards (i.e. those points may have changed).
 
   lod.count = Math.min(lod.count, from);
@@ -119,7 +119,7 @@ export const invalidate = (lod: ILevelOfDetail, from: number): void => {
   }
 };
 
-const levelWithCapacity = (lod: ILevelOfDetail, index: number, capacity: number): ILevel => {
+const levelWithCapacity = (lod: LevelOfDetail, index: number, capacity: number): Level => {
   // Return the given level, making sure that it can hold the given number of blocks.
 
   let level = lod.levels[index];
@@ -156,7 +156,7 @@ const isGap = (xValues: Float64Array, yValues: Float64Array, index: number): boo
 };
 
 const previousFinitePoint = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   from: number
@@ -174,7 +174,7 @@ const previousFinitePoint = (
     for (let levelIndex = (i + 1) % BLOCK_SIZE === 0 ? levels.length - 1 : -1; levelIndex >= 0; --levelIndex) {
       const blockSize = BLOCK_SIZE ** (levelIndex + 1);
 
-      if ((i + 1) % blockSize === 0 && (levels[levelIndex] as ILevel).min[(i + 1) / blockSize - 1] === -1) {
+      if ((i + 1) % blockSize === 0 && (levels[levelIndex] as Level).min[(i + 1) / blockSize - 1] === -1) {
         i -= blockSize;
         skipped = true;
 
@@ -194,7 +194,7 @@ const previousFinitePoint = (
   return -1;
 };
 
-export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
+export const update = (lod: LevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Process the given points from the first one that may have changed since we were last updated (see Note #9 above),
   // or that we haven't processed (see invalidate()).
   // Note #1: like convertPoints() in gpuPlotRenderer.ts, our loops only use local variables, so that they are fast.
@@ -264,7 +264,7 @@ export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Floa
   // Update our blocks of blocks, and so on.
 
   for (let levelIndex = 1, blockSize = BLOCK_SIZE * BLOCK_SIZE; count >= blockSize; ++levelIndex) {
-    const children = lod.levels[levelIndex - 1] as ILevel;
+    const children = lod.levels[levelIndex - 1] as Level;
     const nbOfChildren = nbOfBlocks;
 
     firstBlock = Math.floor(from / blockSize);
@@ -401,7 +401,7 @@ const queryPoints = (xValues: Float64Array, yValues: Float64Array, start: number
   queryResult[QUERY_HAS_GAP] = hasGap;
 };
 
-const queryBlocks = (level: ILevel, yValues: Float64Array, start: number, end: number): void => {
+const queryBlocks = (level: Level, yValues: Float64Array, start: number, end: number): void => {
   // Take the given blocks of the given level into account in our query result.
 
   if (start >= end) {
@@ -444,7 +444,7 @@ const queryBlocks = (level: ILevel, yValues: Float64Array, start: number, end: n
   queryResult[QUERY_HAS_GAP] = hasGap;
 };
 
-const query = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array, start: number, end: number): void => {
+const query = (lod: LevelOfDetail, xValues: Float64Array, yValues: Float64Array, start: number, end: number): void => {
   // Query the given range of points, i.e. from the given start (included) to the given end (excluded), going through
   // the raw points and then the blocks (of the different levels) that cover our range.
 
@@ -454,7 +454,7 @@ const query = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array
   let high = end;
 
   for (let levelIndex = -1; low < high; ++levelIndex) {
-    const level = levelIndex >= 0 ? (lod.levels[levelIndex] as ILevel) : undefined;
+    const level = levelIndex >= 0 ? (lod.levels[levelIndex] as Level) : undefined;
 
     // If there is no next level, then process our remaining points/blocks directly.
 
@@ -488,7 +488,7 @@ const query = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array
 };
 
 const lowerBound = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
@@ -519,7 +519,7 @@ const lowerBound = (
 };
 
 const gallopingLowerBound = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
@@ -549,7 +549,7 @@ const gallopingLowerBound = (
 };
 
 const upperBound = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
@@ -576,7 +576,7 @@ const upperBound = (
 };
 
 export const visibleRange = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   count: number,
@@ -595,7 +595,7 @@ export const visibleRange = (
 };
 
 export const neighbouringPoints = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   count: number,
@@ -621,7 +621,7 @@ const maxNbOfSelectedPoints = (nbOfColumns: number): number => {
   return 4 * (nbOfColumns + 2);
 };
 
-const selectionIndices = (selection: ISelection, nbOfPoints: number, nbOfNewPoints: number): Int32Array => {
+const selectionIndices = (selection: LevelOfDetailSelection, nbOfPoints: number, nbOfNewPoints: number): Int32Array => {
   // Return the indices of the given selection, which has the given number of points, making sure that it can hold the
   // given number of new points (see Note #4 above).
 
@@ -637,7 +637,7 @@ const selectionIndices = (selection: ISelection, nbOfPoints: number, nbOfNewPoin
 };
 
 const skipBlocks = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   from: number,
@@ -669,7 +669,7 @@ const skipBlocks = (
       const blockSize = BLOCK_SIZE ** (levelIndex + 1);
 
       if (i % blockSize === 0) {
-        const level = levels[levelIndex] as ILevel;
+        const level = levels[levelIndex] as Level;
         const block = i / blockSize;
 
         if (gaps ? level.gap[block] === 0 : level.min[block] === -1) {
@@ -694,7 +694,7 @@ const skipBlocks = (
 };
 
 const selectRunPoints = (
-  selection: ISelection,
+  selection: LevelOfDetailSelection,
   nbOfPoints: number,
   start: number,
   end: number,
@@ -729,12 +729,12 @@ const selectRunPoints = (
 };
 
 const selectFiniteRunPoints = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
   end: number,
-  selection: ISelection,
+  selection: LevelOfDetailSelection,
   nbOfPoints: number,
   minIndex: number,
   maxIndex: number
@@ -762,12 +762,12 @@ const selectFiniteRunPoints = (
 };
 
 const selectRangePoints = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
   end: number,
-  selection: ISelection,
+  selection: LevelOfDetailSelection,
   nbOfPoints: number
 ): number => {
   // Select the points of the given range (see Note #1 and Note #4 above), add their index to the given selection (which
@@ -838,7 +838,7 @@ const selectRangePoints = (
 };
 
 export const selectPoints = (
-  lod: ILevelOfDetail,
+  lod: LevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   start: number,
@@ -846,7 +846,7 @@ export const selectPoints = (
   xMin: number,
   xMax: number,
   nbOfColumns: number
-): ISelection => {
+): LevelOfDetailSelection => {
   // Select the points, in the given range (see visibleRange()), that we need to draw for the given X range split into
   // the given number of columns (see Note #1 and Note #4 above).
   // Note: our level of detail must be up to date (see update()).

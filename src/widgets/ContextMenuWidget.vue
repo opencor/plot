@@ -65,22 +65,22 @@ import type { IconName } from '../common/icons';
 // Note #2: only one context menu should be shown at any given time, so we let our other context menus know when we are
 //          about to be shown, and we hide ourselves when another context menu is about to be shown.
 
-export interface IContextMenuAction {
+export interface ContextMenuAction {
   label: string;
   icon?: IconName;
   checked?: boolean;
   command?: () => void;
-  items?: IContextMenuItem[];
+  items?: ContextMenuItem[];
 }
 
-export interface IContextMenuSeparator {
+export interface ContextMenuSeparator {
   separator: true;
 }
 
-export type IContextMenuItem = IContextMenuAction | IContextMenuSeparator;
+export type ContextMenuItem = ContextMenuAction | ContextMenuSeparator;
 
 const props = defineProps<{
-  items: IContextMenuItem[];
+  items: ContextMenuItem[];
   appendTo?: HTMLElement | string;
   darkMode?: boolean;
 }>();
@@ -98,15 +98,15 @@ const SEARCH_TIMEOUT = 500; // Time after which our search string gets reset (in
 
 // Our levels, i.e. our menu and its open submenu, if any, as well as their focused item and position.
 
-interface ILevel {
-  items: IContextMenuItem[];
+interface Level {
+  items: ContextMenuItem[];
   parentIndex: number;
   focusedIndex: number;
   left: number;
   top: number;
 }
 
-const levels = vue.ref<ILevel[]>([]);
+const levels = vue.ref<Level[]>([]);
 const containerRef = vue.shallowRef<HTMLElement | null>(null);
 const levelElements: (HTMLElement | null)[] = [];
 const uid = vue.useId();
@@ -119,18 +119,18 @@ const itemId = (levelIndex: number, index: number): string => {
   return `${uid}-${levelIndex}-${index}`;
 };
 
-const isSeparator = (item: IContextMenuItem): item is IContextMenuSeparator => {
+const isSeparator = (item: ContextMenuItem): item is ContextMenuSeparator => {
   return 'separator' in item;
 };
 
-const actionAt = (levelIndex: number, index: number): IContextMenuAction | undefined => {
+const actionAt = (levelIndex: number, index: number): ContextMenuAction | undefined => {
   const item = levels.value[levelIndex]?.items[index];
 
   return item && !isSeparator(item) ? item : undefined;
 };
 
-const hasCheckColumn = (level: ILevel): boolean => {
-  return level.items.some((item: IContextMenuItem) => !isSeparator(item) && item.checked === true);
+const hasCheckColumn = (level: Level): boolean => {
+  return level.items.some((item: ContextMenuItem) => !isSeparator(item) && item.checked === true);
 };
 
 const isSubmenuOpen = (levelIndex: number, index: number): boolean => {
@@ -228,7 +228,7 @@ const openSubmenu = async (levelIndex: number, index: number, focusFirstItem: bo
 
 // Navigation within a level.
 
-const nextItemIndex = (level: ILevel, fromIndex: number, step: 1 | -1): number => {
+const nextItemIndex = (level: Level, fromIndex: number, step: 1 | -1): number => {
   // Return the index of the next (previous) item that is not a separator, starting from the given index, or the given
   // index if there is none (i.e. we don't wrap around, like PrimeVue).
 

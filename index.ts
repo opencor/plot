@@ -3,23 +3,23 @@
 
 export type { IconName } from './src/common/icons';
 export type {
-  IContextMenuAction,
-  IContextMenuItem,
-  IContextMenuSeparator
+  ContextMenuAction,
+  ContextMenuItem,
+  ContextMenuSeparator
 } from './src/widgets/ContextMenuWidget.vue';
 export type {
   PlotActiveRenderer,
   PlotRenderer,
   PlotTheme,
-  IPlotContextMenuEvent,
-  IPlotCsvExportEvent,
-  IPlotCsvExportFinishedEvent,
-  IPlotCsvExportProgressEvent,
-  IPlotCsvExportStartedEvent,
-  IPlotData,
-  IPlotMargins,
-  IPlotMemoryUsage,
-  IPlotPointCounts,
-  IPlotTrace
+  PlotContextMenuEvent,
+  PlotCsvExportEvent,
+  PlotCsvExportFinishedEvent,
+  PlotCsvExportProgressEvent,
+  PlotCsvExportStartedEvent,
+  PlotData,
+  PlotMargins,
+  PlotMemoryUsage,
+  PlotPointCounts,
+  PlotTrace
 } from './src/widgets/PlotWidget.vue';
 export { default, default as OpenCORPlot } from './src/widgets/PlotWidget.vue';

@@ -15,7 +15,7 @@ import { isContinuationOf } from './traceValues';
 //          Also, if the data of a trace is a view of the same buffer as before and is at least as long as before, then
 //          we assume that only its last value onwards may have changed (e.g., while a simulation is running, its live
 //          data gets appended to, with its last value retrieved again), so only that part gets uploaded (see
-//          IGpuPlotTrace.update() and traceValues.isContinuationOf()). This means that updating a trace with N new
+//          GpuPlotTrace.update() and traceValues.isContinuationOf()). This means that updating a trace with N new
 //          points costs O(N) rather than O(size of the trace).
 // Note #4: a trace is drawn as a series of segments, each of which is a quad, with round caps (and therefore round
 //          joins) and antialiasing being done in our fragment shader using the distance to the segment, while a marker
@@ -187,7 +187,7 @@ void main() {
 
 // Our WebGL resources.
 
-interface ISegmentProgram {
+interface SegmentProgram {
   program: WebGLProgram;
   point0: number;
   point1: number;
@@ -197,16 +197,16 @@ interface ISegmentProgram {
   radius: WebGLUniformLocation | null;
 }
 
-interface ICompositeProgram {
+interface CompositeProgram {
   program: WebGLProgram;
   coverage: WebGLUniformLocation | null;
   origin: WebGLUniformLocation | null;
   colors: WebGLUniformLocation | null;
 }
 
-interface IResources {
-  segmentProgram: ISegmentProgram;
-  compositeProgram: ICompositeProgram;
+interface Resources {
+  segmentProgram: SegmentProgram;
+  compositeProgram: CompositeProgram;
   vertexArray: WebGLVertexArrayObject;
   coverageTexture: WebGLTexture;
   coverageFramebuffer: WebGLFramebuffer;
@@ -262,7 +262,7 @@ const linkProgram = (context: WebGL2RenderingContext, vertexSource: string, frag
   return program;
 };
 
-const createResources = (context: WebGL2RenderingContext): IResources => {
+const createResources = (context: WebGL2RenderingContext): Resources => {
   const segmentProgram = linkProgram(context, SEGMENT_VERTEX_SHADER, SEGMENT_FRAGMENT_SHADER);
   const compositeProgram = linkProgram(context, COMPOSITE_VERTEX_SHADER, COMPOSITE_FRAGMENT_SHADER);
   const vertexArray = context.createVertexArray();
@@ -363,18 +363,18 @@ const convertPoints = (
 
 // A trace, i.e. its data on the GPU.
 
-export interface IGpuPlotTraceMemoryUsage {
+export interface GpuPlotTraceMemoryUsage {
   cpu: number; // Number of bytes used in memory, i.e. by our level of detail (unless it is shared).
   gpu: number; // Number of bytes used on the GPU, i.e. by our buffer and our selection buffer.
 }
 
-export interface IGpuPlotTrace {
+export interface GpuPlotTrace {
   update: (xValues: Float64Array, yValues: Float64Array) => void;
   dispose: () => void;
-  memoryUsage: () => IGpuPlotTraceMemoryUsage;
+  memoryUsage: () => GpuPlotTraceMemoryUsage;
 }
 
-interface IDrawnPoints {
+interface DrawnPoints {
   start: number; // Index of the first point (included) of which we draw the marker.
   end: number; // Index of the last point (excluded) of which we draw the marker.
   lineBuffer: WebGLBuffer | null; // Buffer that contains the points of which we draw the line.
@@ -382,7 +382,7 @@ interface IDrawnPoints {
   lineEnd: number; // Index of the last point (excluded), in our line buffer, of which we draw the line.
 }
 
-interface IGpuPlotTraceInternals extends IGpuPlotTrace {
+interface GpuPlotTraceInternals extends GpuPlotTrace {
   buffer: () => WebGLBuffer | null;
   count: () => number;
   originX: () => number;
@@ -391,15 +391,15 @@ interface IGpuPlotTraceInternals extends IGpuPlotTrace {
   maxAbsY: () => number;
   drawnPoints: (
     context: WebGL2RenderingContext,
-    area: IGpuPlotArea,
+    area: GpuPlotArea,
     lineWidth: number,
     useLevelOfDetail: boolean
-  ) => IDrawnPoints;
+  ) => DrawnPoints;
 }
 
 // Rendering.
 
-export interface IGpuPlotArea {
+export interface GpuPlotArea {
   // Our plotting area (in canvas pixels) and the ranges of our axes.
 
   left: number;
@@ -412,8 +412,8 @@ export interface IGpuPlotArea {
   yMax: number;
 }
 
-export interface IGpuPlotItem {
-  trace: IGpuPlotTrace;
+export interface GpuPlotItem {
+  trace: GpuPlotTrace;
   color: string;
   alpha: number;
   lineWidth: number; // In canvas pixels.
@@ -421,11 +421,11 @@ export interface IGpuPlotItem {
   levelOfDetail?: boolean; // Whether to only draw the points that are needed (see Note #7 above), true by default.
 }
 
-const axisFactors = (area: IGpuPlotArea): [number, number] => {
+const axisFactors = (area: GpuPlotArea): [number, number] => {
   return [area.width / (area.xMax - area.xMin), area.height / (area.yMax - area.yMin)];
 };
 
-export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean => {
+export const isPrecise = (area: GpuPlotArea, items: GpuPlotItem[]): boolean => {
   // Return whether our data is precise enough to be rendered with the given ranges, i.e. whether the error on the
   // position of a point due to our use of 32-bit floats would be negligible (which may not be the case if we are zoomed
   // in a lot), and whether none of our (finite) points would be mistaken for a gap by our vertex shader (see Note #6
@@ -437,8 +437,8 @@ export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean =>
     return false;
   }
 
-  return items.every((item: IGpuPlotItem) => {
-    const trace = item.trace as IGpuPlotTraceInternals;
+  return items.every((item: GpuPlotItem) => {
+    const trace = item.trace as GpuPlotTraceInternals;
 
     return (
       trace.maxAbsX() * FLOAT32_EPSILON * Math.abs(xFactor) <= MAX_PRECISION_ERROR &&
@@ -453,7 +453,7 @@ export const isPrecise = (area: IGpuPlotArea, items: IGpuPlotItem[]): boolean =>
 // Note: we only ever need one renderer (see Note #1 above), i.e. gpuPlotRenderer below, but being able to create one
 //       means that our tests can each use their own renderer.
 
-export interface IGpuPlotPointCounts {
+export interface GpuPlotPointCounts {
   // The number of points that got rendered, i.e. the total number of points of our traces and the number of them that
   // actually got drawn (see Note #7 above).
 
@@ -461,25 +461,25 @@ export interface IGpuPlotPointCounts {
   nbOfDrawnPoints: number;
 }
 
-export interface IGpuPlotRenderer {
+export interface GpuPlotRenderer {
   isAvailable: () => boolean;
   onAvailabilityChange: (listener: () => void) => () => void;
   createTrace: (
-    lod?: levelOfDetailUtils.ILevelOfDetail,
-    pathLod?: pathLevelOfDetailUtils.IPathLevelOfDetail
-  ) => IGpuPlotTrace;
+    lod?: levelOfDetailUtils.LevelOfDetail,
+    pathLod?: pathLevelOfDetailUtils.PathLevelOfDetail
+  ) => GpuPlotTrace;
   render: (
     target: CanvasRenderingContext2D,
-    area: IGpuPlotArea,
-    items: IGpuPlotItem[],
-    pointCounts?: IGpuPlotPointCounts
+    area: GpuPlotArea,
+    items: GpuPlotItem[],
+    pointCounts?: GpuPlotPointCounts
   ) => boolean;
   cancelRender: (target: CanvasRenderingContext2D) => void;
 }
 
 // A copy of a region of our canvas to the canvas of a plot, which is pending (see Note #8 above).
 
-interface IPendingCopy {
+interface PendingCopy {
   target: CanvasRenderingContext2D;
   left: number; // Left of our region, in our canvas.
   top: number; // Top of our region, in our canvas.
@@ -492,15 +492,15 @@ interface IPendingCopy {
 let uploadBuffer = new Float32Array(0);
 let selectionUploadBuffer = new Float32Array(0);
 
-export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
+export const createGpuPlotRenderer = (): GpuPlotRenderer => {
   let canvas: HTMLCanvasElement | null = null;
   let gl: WebGL2RenderingContext | null = null;
-  let resources: IResources | null = null;
+  let resources: Resources | null = null;
   let initialised = false;
   let contextLost = false;
   let generation = 0;
   const availabilityListeners = new Set<() => void>();
-  let pendingCopies: IPendingCopy[] = [];
+  let pendingCopies: PendingCopy[] = [];
   let snapshot: HTMLCanvasElement | null = null;
   let snapshotContext: CanvasRenderingContext2D | null = null;
   let atlasLeft = 0;
@@ -560,7 +560,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
           resources = createResources(context);
           contextLost = false;
 
-          // Our traces' buffers are gone, so make sure that they get recreated (see IGpuPlotTrace.update()) and let our
+          // Our traces' buffers are gone, so make sure that they get recreated (see GpuPlotTrace.update()) and let our
           // listeners know that we are available again.
 
           ++generation;
@@ -605,9 +605,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   };
 
   const createTrace = (
-    sharedLod?: levelOfDetailUtils.ILevelOfDetail,
-    sharedPathLod?: pathLevelOfDetailUtils.IPathLevelOfDetail
-  ): IGpuPlotTrace => {
+    sharedLod?: levelOfDetailUtils.LevelOfDetail,
+    sharedPathLod?: pathLevelOfDetailUtils.PathLevelOfDetail
+  ): GpuPlotTrace => {
     // Create a trace, which uses the given (path) level of detail, if any (e.g., so that it can be shared with the
     // Canvas 2D renderer of a plot, see linearPathPoints() in PlotWidget.vue), or its own (path) level of detail
     // otherwise.
@@ -746,7 +746,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
     const uploadSelection = (
       context: WebGL2RenderingContext,
-      selection: levelOfDetailUtils.ISelection,
+      selection: levelOfDetailUtils.LevelOfDetailSelection,
       xs: Float64Array,
       ys: Float64Array
     ): WebGLBuffer | null => {
@@ -768,7 +768,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
     const uploadPathLevel = (
       context: WebGL2RenderingContext,
-      level: pathLevelOfDetailUtils.IPathLevel,
+      level: pathLevelOfDetailUtils.PathLevel,
       xs: Float64Array,
       ys: Float64Array
     ): WebGLBuffer | null => {
@@ -866,16 +866,16 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
     const drawnPoints = (
       context: WebGL2RenderingContext,
-      area: IGpuPlotArea,
+      area: GpuPlotArea,
       lineWidth: number,
       useLevelOfDetail: boolean
-    ): IDrawnPoints => {
+    ): DrawnPoints => {
       // Return the points that we need to draw for the given plotting area (see Note #7 above), i.e. all of our points
       // (always if we are not to use our level of detail), or only our visible points if our X values are sorted and,
       // for our line, possibly only some of them, or, for our line, the points of a level of our path level of detail
       // if our X values are not sorted.
 
-      const res: IDrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
+      const res: DrawnPoints = { start: 0, end: count, lineBuffer: buffer, lineStart: 0, lineEnd: count };
       const nbOfColumns = Math.max(1, Math.ceil(LOD_COLUMNS_PER_PIXEL * area.width));
       const minNbOfPoints = levelOfDetailUtils.MIN_POINTS_PER_COLUMN * nbOfColumns;
 
@@ -939,7 +939,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       return res;
     };
 
-    const memoryUsage = (): IGpuPlotTraceMemoryUsage => {
+    const memoryUsage = (): GpuPlotTraceMemoryUsage => {
       // Return the number of bytes that we use in memory and on the GPU, ignoring our buffers if they belong to a lost
       // context (since they are gone).
 
@@ -953,7 +953,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       };
     };
 
-    const res: IGpuPlotTraceInternals = {
+    const res: GpuPlotTraceInternals = {
       update,
       dispose,
       memoryUsage,
@@ -1074,7 +1074,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   const cancelRender = (target: CanvasRenderingContext2D): void => {
     // Cancel the pending copy to the given canvas, if any, e.g., since it is being redrawn (see Note #8 above).
 
-    pendingCopies = pendingCopies.filter((copy: IPendingCopy) => copy.target !== target);
+    pendingCopies = pendingCopies.filter((copy: PendingCopy) => copy.target !== target);
   };
 
   const allocateRegion = (
@@ -1120,9 +1120,9 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
 
   const render = (
     target: CanvasRenderingContext2D,
-    area: IGpuPlotArea,
-    items: IGpuPlotItem[],
-    pointCounts?: IGpuPlotPointCounts
+    area: GpuPlotArea,
+    items: GpuPlotItem[],
+    pointCounts?: GpuPlotPointCounts
   ): boolean => {
     // Render the given items on the given canvas, within the given plotting area, and return whether we could. If
     // requested, also return the number of points that we rendered and drew.
@@ -1150,7 +1150,7 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     // Determine the region (in canvas pixels) that we need to render, i.e. our plotting area extended by half the width
     // of our widest line.
 
-    const margin = Math.max(0, ...items.map((item: IGpuPlotItem) => 0.5 * item.lineWidth));
+    const margin = Math.max(0, ...items.map((item: GpuPlotItem) => 0.5 * item.lineWidth));
     const regionLeft = Math.floor(area.left - margin);
     const regionTop = Math.floor(area.top - margin);
     const regionWidth = Math.ceil(area.left + area.width + margin) - regionLeft;
@@ -1239,11 +1239,10 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     // Determine the items that we need to render, i.e. those that have some points and are not fully transparent, as
     // well as their (premultiplied) colour.
 
-    const renderedItems: [item: IGpuPlotItem, trace: IGpuPlotTraceInternals, buffer: WebGLBuffer, color: number[]][] =
-      [];
+    const renderedItems: [item: GpuPlotItem, trace: GpuPlotTraceInternals, buffer: WebGLBuffer, color: number[]][] = [];
 
     for (const item of items) {
-      const trace = item.trace as IGpuPlotTraceInternals;
+      const trace = item.trace as GpuPlotTraceInternals;
       const buffer = trace.buffer();
       const [r, g, b, a] = rgba(item.color);
       const alpha = a * item.alpha;

@@ -2,8 +2,8 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   create,
-  type ILevelOfDetail,
-  type ISelection,
+  type LevelOfDetail,
+  type LevelOfDetailSelection,
   invalidate,
   memoryUsage,
   neighbouringPoints,
@@ -31,11 +31,7 @@ const randomGenerator = (seed: number): (() => number) => {
   };
 };
 
-const levelOfDetail = (
-  xValues: Float64Array,
-  yValues: Float64Array,
-  count: number = xValues.length
-): ILevelOfDetail => {
+const levelOfDetail = (xValues: Float64Array, yValues: Float64Array, count: number = xValues.length): LevelOfDetail => {
   // Return an up-to-date level of detail for the given points.
 
   const res = create();
@@ -45,7 +41,7 @@ const levelOfDetail = (
   return res;
 };
 
-const selectedIndices = (selection: ISelection | undefined): number[] => {
+const selectedIndices = (selection: LevelOfDetailSelection | undefined): number[] => {
   // Return the indices of the given selection.
 
   return selection ? Array.from(selection.indices.subarray(0, selection.nbOfPoints)) : [];
@@ -65,7 +61,7 @@ const checkSelection = (
   xMin: number,
   xMax: number,
   nbOfColumns: number,
-  selection: ISelection | undefined
+  selection: LevelOfDetailSelection | undefined
 ): void => {
   // Check that the given selection is what we need to draw the given points for the given X range split into the given
   // number of columns, i.e. that, for each range of points (see selectPoints()), all of its points are selected if it
@@ -284,7 +280,16 @@ describe('memoryUsage()', () => {
 
     // Our selection, i.e. the (32-bit integer) index of our selected points.
 
-    const selection = selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 10) as ISelection;
+    const selection = selectPoints(
+      lod,
+      xValues,
+      xValues,
+      0,
+      nbOfPoints,
+      0,
+      nbOfPoints - 1,
+      10
+    ) as LevelOfDetailSelection;
 
     expect(memoryUsage(lod)).toBe(blocksMemoryUsage + 4 * selection.indices.length);
   });
@@ -435,7 +440,7 @@ describe('update()', () => {
 
     const freshLod = levelOfDetail(xValues, yValues);
 
-    const usedBlocks = (levelOfDetail: ILevelOfDetail): number[][] => {
+    const usedBlocks = (levelOfDetail: LevelOfDetail): number[][] => {
       // Return the blocks of the given level of detail that are in use (i.e. not its spare capacity).
 
       return levelOfDetail.levels.map((level, index) => {
@@ -652,7 +657,16 @@ describe('selectPoints()', () => {
 
     // Our selections are numbered whether or not they reuse (some of) the previous one.
 
-    const selection = selectPoints(lod, xValues, xValues, 0, nbOfPoints, 0, nbOfPoints - 1, 10) as ISelection;
+    const selection = selectPoints(
+      lod,
+      xValues,
+      xValues,
+      0,
+      nbOfPoints,
+      0,
+      nbOfPoints - 1,
+      10
+    ) as LevelOfDetailSelection;
 
     expect(selection.number).toBe(1);
 

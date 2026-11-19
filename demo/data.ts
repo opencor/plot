@@ -1,4 +1,4 @@
-import type { IPlotData, IPlotTrace } from '../index';
+import type { PlotData, PlotTrace } from '../index';
 
 // The kinds of data that our demo can plot, each of which tests a different aspect of our plot:
 //  - smooth: sine waves, i.e. what level of detail must draw faithfully;
@@ -143,7 +143,7 @@ const AXIS_TITLES: Record<DataKind, [x: string, y: string]> = {
   largeOffsets: ['Time since 1970 (<i>s</i>)', 'Signal']
 };
 
-export const plotData = (kind: DataKind, nbOfTraces: number, nbOfPoints: number, instance: number): IPlotData => {
+export const plotData = (kind: DataKind, nbOfTraces: number, nbOfPoints: number, instance: number): PlotData => {
   // Return the data of the given instance of our plot, which is different for each instance (since its curves have a
   // different phase and its noise a different seed). Also, the Y values of our instances have different scales (i.e.
   // 1, 10, 100, and 1,000, over and over), so that their Y tick labels have different widths and therefore their plots
@@ -152,7 +152,7 @@ export const plotData = (kind: DataKind, nbOfTraces: number, nbOfPoints: number,
 
   const x = kind === 'unsorted' ? undefined : xValues(kind, nbOfPoints);
   const scale = 10 ** (instance % NB_OF_SCALES);
-  const traces: IPlotTrace[] = [];
+  const traces: PlotTrace[] = [];
 
   for (let i = 0; i < nbOfTraces; ++i) {
     const phase = (2 * Math.PI * i) / nbOfTraces + 0.37 * instance;

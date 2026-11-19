@@ -33,14 +33,14 @@ import * as common from '../common/common';
 //          our plotting area doesn't get clipped. However, a target is only drawn if its point is within our plotting
 //          area (e.g., not if we are zoomed in and the last point of its trace is not visible).
 
-export interface IPlotLivePoint {
+export interface PlotLivePoint {
   x: number; // In CSS pixels, relative to our plotting area.
   y: number; // In CSS pixels, relative to our plotting area.
   color: string;
   alpha: number;
 }
 
-export interface IPlotLivePointsRect {
+export interface PlotLivePointsRect {
   left: number;
   top: number;
   width: number;
@@ -60,9 +60,9 @@ const MARGIN = Math.ceil(RADIUS + GAP + RING_WIDTH + HALO_WIDTH) + 1; // Plus a 
 
 const canvasRef = vue.useTemplateRef<HTMLCanvasElement>('canvasRef');
 const visible = vue.ref<boolean>(false);
-const rect = vue.shallowRef<IPlotLivePointsRect | undefined>();
+const rect = vue.shallowRef<PlotLivePointsRect | undefined>();
 
-const setPoints = (plotRect: IPlotLivePointsRect | undefined, points: IPlotLivePoint[]): void => {
+const setPoints = (plotRect: PlotLivePointsRect | undefined, points: PlotLivePoint[]): void => {
   // Draw the given points, if any, for the given plotting area (in CSS pixels, relative to our plot).
 
   const canvas = canvasRef.value;

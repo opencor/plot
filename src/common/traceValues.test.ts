@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { type IValuesStatistics, isContinuationOf, logValues, valuesStatistics } from './traceValues';
+import { type ValuesStatistics, isContinuationOf, logValues, valuesStatistics } from './traceValues';
 
 // Some helpers.
 
@@ -10,7 +10,7 @@ const view = (buffer: Float64Array, length: number, offset: number = 0): Float64
   return buffer.subarray(offset, offset + length);
 };
 
-const statistics = (values: number[]): Pick<IValuesStatistics, 'min' | 'max'> => {
+const statistics = (values: number[]): Pick<ValuesStatistics, 'min' | 'max'> => {
   // Return the statistics that matter of the given values.
 
   const { min, max } = valuesStatistics(Float64Array.from(values));
@@ -168,7 +168,7 @@ describe('valuesStatistics()', () => {
         return run % 2 ? index + (r < 0.05 ? -10 : 0) : index + 10 * r;
       };
       let length = 0;
-      let previous: IValuesStatistics | undefined;
+      let previous: ValuesStatistics | undefined;
 
       while (length < NB_OF_VALUES) {
         if (length > 0 && random() < 0.5) {

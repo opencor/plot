@@ -2,10 +2,10 @@ import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test';
 
 import {
   createGpuPlotRenderer,
-  type IGpuPlotArea,
-  type IGpuPlotPointCounts,
-  type IGpuPlotRenderer,
-  type IGpuPlotTrace,
+  type GpuPlotArea,
+  type GpuPlotPointCounts,
+  type GpuPlotRenderer,
+  type GpuPlotTrace,
   isPrecise
 } from './gpuPlotRenderer';
 import * as levelOfDetailUtils from './levelOfDetailUtils';
@@ -19,22 +19,22 @@ import * as pathLevelOfDetailUtils from './pathLevelOfDetailUtils';
 // Note #3: some of the calls made to our fake context can be made to fail (e.g., to compile a shader), using their
 //          name.
 
-interface IFakeObject {
+interface FakeObject {
   kind: string;
 }
 
-interface IFakeContext {
+interface FakeContext {
   context: WebGL2RenderingContext;
   canvas: HTMLCanvasElement | undefined;
   calls: [name: string, args: unknown[]][];
-  buffers: IFakeObject[];
-  data: Map<IFakeObject, Float32Array>;
+  buffers: FakeObject[];
+  data: Map<FakeObject, Float32Array>;
   lost: boolean;
   failures: Set<string>;
 }
 
-const createFakeContext = (failures: string[]): IFakeContext => {
-  const res: IFakeContext = {
+const createFakeContext = (failures: string[]): FakeContext => {
+  const res: FakeContext = {
     context: undefined as unknown as WebGL2RenderingContext,
     canvas: undefined,
     calls: [],
@@ -43,12 +43,12 @@ const createFakeContext = (failures: string[]): IFakeContext => {
     lost: false,
     failures: new Set(failures)
   };
-  const boundBuffers = new Map<string, IFakeObject | null>();
-  const fakeObject = (kind: string): IFakeObject | null => {
+  const boundBuffers = new Map<string, FakeObject | null>();
+  const fakeObject = (kind: string): FakeObject | null => {
     return res.failures.has(`create${kind}`) ? null : { kind };
   };
   const boundData = (target: string): Float32Array => {
-    return res.data.get(boundBuffers.get(target) as IFakeObject) as Float32Array;
+    return res.data.get(boundBuffers.get(target) as FakeObject) as Float32Array;
   };
   const implementations: Record<string, (...args: never[]) => unknown> = {
     createShader: () => fakeObject('Shader'),
@@ -57,7 +57,7 @@ const createFakeContext = (failures: string[]): IFakeContext => {
     createTexture: () => fakeObject('Texture'),
     createFramebuffer: () => fakeObject('Framebuffer'),
     createBuffer: () => {
-      const buffer = fakeObject('Buffer') as IFakeObject;
+      const buffer = fakeObject('Buffer') as FakeObject;
 
       res.buffers.push(buffer);
 
@@ -70,11 +70,11 @@ const createFakeContext = (failures: string[]): IFakeContext => {
     getAttribLocation: (_program: never, name: string) => (name === 'aPoint0' ? 0 : 1),
     getUniformLocation: (_program: never, name: string) => name,
     isContextLost: () => res.lost,
-    bindBuffer: (target: string, buffer: IFakeObject | null) => {
+    bindBuffer: (target: string, buffer: FakeObject | null) => {
       boundBuffers.set(target, buffer);
     },
     bufferData: (target: string, size: number) => {
-      res.data.set(boundBuffers.get(target) as IFakeObject, new Float32Array(size / 4));
+      res.data.set(boundBuffers.get(target) as FakeObject, new Float32Array(size / 4));
     },
     bufferSubData: (target: string, offset: number, source: Float32Array, sourceOffset: number, length: number) => {
       boundData(target).set(source.subarray(sourceOffset, sourceOffset + length), offset / 4);
@@ -120,9 +120,9 @@ const COLORS: Record<string, number[]> = {
   'rgb(0 0 255 / 50%)': [0, 0, 255, 128]
 };
 
-type IFake2dContext = CanvasRenderingContext2D & { nbOfParsedColors: number; drawImageCalls: unknown[][] };
+type Fake2dContext = CanvasRenderingContext2D & { nbOfParsedColors: number; drawImageCalls: unknown[][] };
 
-const createFake2dContext = (): IFake2dContext => {
+const createFake2dContext = (): Fake2dContext => {
   // Note: this is also the 2D context of the snapshot of our renderer (see Note #8 of gpuPlotRenderer.ts), hence we
   //       keep track of what gets drawn on it.
 
@@ -143,17 +143,17 @@ const createFake2dContext = (): IFake2dContext => {
     }
   };
 
-  return res as unknown as IFake2dContext;
+  return res as unknown as Fake2dContext;
 };
 
 // A fake 2D context to render to.
 
-interface IFakeTarget {
+interface FakeTarget {
   context: CanvasRenderingContext2D;
   drawImageCalls: unknown[][];
 }
 
-const createFakeTarget = (): IFakeTarget => {
+const createFakeTarget = (): FakeTarget => {
   const drawImageCalls: unknown[][] = [];
 
   return {
@@ -173,7 +173,7 @@ const createFakeTarget = (): IFakeTarget => {
 
 const createRenderer = (
   failures: string[] = []
-): { renderer: IGpuPlotRenderer; fake: IFakeContext; fake2d: ReturnType<typeof createFake2dContext> } => {
+): { renderer: GpuPlotRenderer; fake: FakeContext; fake2d: ReturnType<typeof createFake2dContext> } => {
   // Create a renderer that uses a fake WebGL 2 context (and a fake 2D context to parse colours).
 
   const fake = createFakeContext(failures);
@@ -195,19 +195,19 @@ const createRenderer = (
   return { renderer: createGpuPlotRenderer(), fake, fake2d };
 };
 
-const calls = (fake: IFakeContext, name: string): unknown[][] => {
+const calls = (fake: FakeContext, name: string): unknown[][] => {
   return fake.calls.filter(([callName]) => callName === name).map(([, args]) => args);
 };
 
 const GAP = Math.fround(3.0e38);
 
-const uploadedPoints = (fake: IFakeContext, nbOfPoints: number): number[] => {
+const uploadedPoints = (fake: FakeContext, nbOfPoints: number): number[] => {
   // Return the given number of points that were uploaded to our last buffer.
 
-  return Array.from((fake.data.get(fake.buffers.at(-1) as IFakeObject) as Float32Array).subarray(0, 2 * nbOfPoints));
+  return Array.from((fake.data.get(fake.buffers.at(-1) as FakeObject) as Float32Array).subarray(0, 2 * nbOfPoints));
 };
 
-const AREA: IGpuPlotArea = {
+const AREA: GpuPlotArea = {
   left: 10,
   top: 20,
   width: 100,
@@ -364,7 +364,7 @@ describe('createTrace()', () => {
         ['COPY_READ_BUFFER', 'ARRAY_BUFFER', 0, 0, (nbOfPoints - 1) * 8]
       ]);
       expect(calls(fake, 'deleteBuffer')).toEqual([[oldBuffer]]);
-      expect(fake.buffers.at(-1)).toBe(newBuffer as IFakeObject);
+      expect(fake.buffers.at(-1)).toBe(newBuffer as FakeObject);
       expect(uploadedPoints(fake, 1500)).toEqual(Array.from({ length: 1500 }, (_value, i) => [i, 2 * i]).flat());
 
       mock.restore();
@@ -452,7 +452,7 @@ describe('isPrecise()', () => {
 // render().
 
 describe('render()', () => {
-  const traceWith = (renderer: IGpuPlotRenderer, nbOfPoints: number): IGpuPlotTrace => {
+  const traceWith = (renderer: GpuPlotRenderer, nbOfPoints: number): GpuPlotTrace => {
     const res = renderer.createTrace();
     const xValues = Float64Array.from({ length: nbOfPoints }, (_value, i) => i);
 
@@ -461,7 +461,7 @@ describe('render()', () => {
     return res;
   };
 
-  const compositedColors = (fake: IFakeContext): number[][] => {
+  const compositedColors = (fake: FakeContext): number[][] => {
     // Return the colours with which our batches of traces were composited.
 
     return calls(fake, 'uniform4fv').map(([, colors]) => Array.from(colors as Float32Array));
@@ -578,7 +578,7 @@ describe('render()', () => {
 
   it('returns the number of points that it rendered and drew', () => {
     const { renderer } = createRenderer();
-    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 123, nbOfDrawnPoints: 45 };
+    const pointCounts: GpuPlotPointCounts = { nbOfPoints: 123, nbOfDrawnPoints: 45 };
     const items = [
       { trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 1, markerSize: 0 },
       { trace: traceWith(renderer, 7), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 1 },
@@ -805,7 +805,7 @@ describe('level of detail', () => {
   // levelOfDetailUtils.ts).
 
   const NB_OF_POINTS = 10000;
-  const LOD_AREA: IGpuPlotArea = { ...AREA, xMin: 1, xMax: NB_OF_POINTS };
+  const LOD_AREA: GpuPlotArea = { ...AREA, xMin: 1, xMax: NB_OF_POINTS };
 
   const values = (nbOfPoints: number, phase: number = 0): [xValues: Float64Array, yValues: Float64Array] => {
     // Return some points with sorted X values (from 1 to the given number of points) and Y values that go up and down,
@@ -817,7 +817,7 @@ describe('level of detail', () => {
     return [xValues, xValues.map((x) => Math.sin(0.37 * x + phase) + 0.001 * x + 5)];
   };
 
-  const selectedPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
+  const selectedPoints = (xValues: Float64Array, yValues: Float64Array, area: GpuPlotArea): number[] => {
     // Return the points that our level of detail selects for the given values and plotting area, relative to their
     // first point and as 32-bit floats (or as gaps, for points with a non-finite X or Y value), i.e. what our renderer
     // should upload.
@@ -849,13 +849,13 @@ describe('level of detail', () => {
     );
   };
 
-  const bufferPoints = (fake: IFakeContext, buffer: IFakeObject | undefined, nbOfValues: number): number[] => {
+  const bufferPoints = (fake: FakeContext, buffer: FakeObject | undefined, nbOfValues: number): number[] => {
     // Return the given number of values that were uploaded to the given buffer.
 
-    return Array.from((fake.data.get(buffer as IFakeObject) as Float32Array).subarray(0, nbOfValues));
+    return Array.from((fake.data.get(buffer as FakeObject) as Float32Array).subarray(0, nbOfValues));
   };
 
-  const lineDraws = (fake: IFakeContext): unknown[][] => {
+  const lineDraws = (fake: FakeContext): unknown[][] => {
     // Return the offset (in points) of our line and its number of segments, for each line that was drawn.
 
     const offsets = calls(fake, 'vertexAttribPointer')
@@ -874,7 +874,7 @@ describe('level of detail', () => {
 
     fake.calls.length = 0;
 
-    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+    const pointCounts: GpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
 
     renderer.render(
       createFakeTarget().context,
@@ -909,7 +909,7 @@ describe('level of detail', () => {
     // points just before and after them, i.e. 103 points (and therefore 102 segments), which is too few for our level
     // of detail to be used.
 
-    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+    const pointCounts: GpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
 
     renderer.render(
       createFakeTarget().context,
@@ -961,7 +961,7 @@ describe('level of detail', () => {
   // few of its points) or some noise (so that our path level of detail can't do anything about it, see Note #7 of
   // pathLevelOfDetailUtils.ts), in a plotting area that is about as big as them.
 
-  const CURVE_AREA: IGpuPlotArea = { ...AREA, xMin: -1, xMax: 1, yMin: -1, yMax: 1 };
+  const CURVE_AREA: GpuPlotArea = { ...AREA, xMin: -1, xMax: 1, yMin: -1, yMax: 1 };
 
   const curve = (nbOfPoints: number): [xValues: Float64Array, yValues: Float64Array] => {
     return [
@@ -981,7 +981,7 @@ describe('level of detail', () => {
     return [Float64Array.from({ length: nbOfPoints }, random), Float64Array.from({ length: nbOfPoints }, random)];
   };
 
-  const pathLevelPoints = (xValues: Float64Array, yValues: Float64Array, area: IGpuPlotArea): number[] => {
+  const pathLevelPoints = (xValues: Float64Array, yValues: Float64Array, area: GpuPlotArea): number[] => {
     // Return the points of the level of our path level of detail that we should draw for the given values and
     // plotting area (i.e. with tolerances of a quarter of a pixel), relative to their first point and as 32-bit
     // floats, i.e. what our renderer should upload.
@@ -1005,7 +1005,7 @@ describe('level of detail', () => {
     ]);
   };
 
-  const selectionUploads = (fake: IFakeContext): number => {
+  const selectionUploads = (fake: FakeContext): number => {
     // Return the number of uploads that were made to our selection buffer (i.e. to any buffer but our first one, since
     // our selection buffer gets replaced when it needs to be bigger).
 
@@ -1032,7 +1032,7 @@ describe('level of detail', () => {
 
     fake.calls.length = 0;
 
-    const pointCounts: IGpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
+    const pointCounts: GpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
 
     renderer.render(
       createFakeTarget().context,

@@ -31,12 +31,12 @@ bun add @opencor/plot  # Or npm install @opencor/plot, etc.
 </template>
 
 <script setup lang="ts">
-import OpenCORPlot, { type IPlotData } from '@opencor/plot';
+import OpenCORPlot, { type PlotData } from '@opencor/plot';
 import '@opencor/plot/style.css';
 
 const x = Float64Array.from({ length: 1000 }, (_, i) => i / 100);
 
-const data: IPlotData = {
+const data: PlotData = {
   xAxisTitle: 'Time (s)',
   yAxisTitle: 'Voltage (mV)',
   traces: [
@@ -61,35 +61,35 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 
 | Type | Definition | Description |
 |---|---|---|
-| `IPlotData` | `{ traces, xAxisTitle?, yAxisTitle?, xAxisRange?, yAxisRange? }` | The data to plot (see [Data](#data)). |
-| `IPlotTrace` | `{ name, x, y, xValue, yValue, color, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
-| `IPlotMargins` | `{ left: number; right: number }` | The left and right margins (in pixels) of a plot, i.e. the space taken by its Y axis and legend (see the [`margins`](#props) prop and the [`marginsUpdated`](#events) event). |
+| `PlotData` | `{ traces, xAxisTitle?, yAxisTitle?, xAxisRange?, yAxisRange? }` | The data to plot (see [Data](#data)). |
+| `PlotTrace` | `{ name, x, y, xValue, yValue, color, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
+| `PlotMargins` | `{ left: number; right: number }` | The left and right margins (in pixels) of a plot, i.e. the space taken by its Y axis and legend (see the [`margins`](#props) prop and the [`marginsUpdated`](#events) event). |
 | `PlotTheme` | `'system' \| 'light' \| 'dark'` | The value of the [`theme`](#props) prop. |
 | `PlotRenderer` | `'auto' \| 'canvas' \| 'webgl'` | The value of the [`renderer`](#props) prop. |
 | `PlotActiveRenderer` | `'canvas' \| 'webgl' \| 'none'` | The value of the [`activeRenderer`](#properties) property (`'none'` if traces couldn't be drawn). |
-| `IPlotCsvExportEvent` | `IPlotCsvExportStartedEvent \| IPlotCsvExportProgressEvent \| IPlotCsvExportFinishedEvent` | The payload of the [`csvExport`](#events) event. Use its `type` to tell which one it is. |
-| `IPlotCsvExportStartedEvent` | `{ type: 'started' }` | An export to CSV has started. |
-| `IPlotCsvExportProgressEvent` | `{ type: 'progress'; percent: number }` | An export to CSV has made some progress: `percent` goes from 0 to 100 (an integer). |
-| `IPlotCsvExportFinishedEvent` | `{ type: 'finished'; success: boolean }` | An export to CSV has finished, whether successfully (and the file was downloaded) or not. |
-| `IPlotContextMenuEvent` | `{ clientX: number; clientY: number; usingKeyboard: boolean; items: IContextMenuItem[] }` | The payload of the [`contextMenu`](#events) event: where the context menu was requested (in client coordinates), whether it was requested using the keyboard (in which case the custom menu should take the keyboard focus), and the items that our context menu would have shown. |
-| `IContextMenuItem` | `IContextMenuAction \| IContextMenuSeparator` | An item of a context menu. |
-| `IContextMenuAction` | `{ label: string; icon?: IconName; checked?: boolean; command?: () => void; items?: IContextMenuItem[] }` | An action: its `label`, its `icon`, whether it is checked (only for a checkable action, e.g. to make an axis logarithmic), the `command` to call when it is chosen, and its submenu `items`, if any. |
-| `IContextMenuSeparator` | `{ separator: true }` | A separator. |
+| `PlotCsvExportEvent` | `PlotCsvExportStartedEvent \| PlotCsvExportProgressEvent \| PlotCsvExportFinishedEvent` | The payload of the [`csvExport`](#events) event. Use its `type` to tell which one it is. |
+| `PlotCsvExportStartedEvent` | `{ type: 'started' }` | An export to CSV has started. |
+| `PlotCsvExportProgressEvent` | `{ type: 'progress'; percent: number }` | An export to CSV has made some progress: `percent` goes from 0 to 100 (an integer). |
+| `PlotCsvExportFinishedEvent` | `{ type: 'finished'; success: boolean }` | An export to CSV has finished, whether successfully (and the file was downloaded) or not. |
+| `PlotContextMenuEvent` | `{ clientX: number; clientY: number; usingKeyboard: boolean; items: ContextMenuItem[] }` | The payload of the [`contextMenu`](#events) event: where the context menu was requested (in client coordinates), whether it was requested using the keyboard (in which case the custom menu should take the keyboard focus), and the items that our context menu would have shown. |
+| `ContextMenuItem` | `ContextMenuAction \| ContextMenuSeparator` | An item of a context menu. |
+| `ContextMenuAction` | `{ label: string; icon?: IconName; checked?: boolean; command?: () => void; items?: ContextMenuItem[] }` | An action: its `label`, its `icon`, whether it is checked (only for a checkable action, e.g. to make an axis logarithmic), the `command` to call when it is chosen, and its submenu `items`, if any. |
+| `ContextMenuSeparator` | `{ separator: true }` | A separator. |
 | `IconName` | `'angle-right' \| 'arrows-h' \| 'arrows-v' \| 'chart-line' \| 'check' \| 'copy' \| 'download' \| 'image' \| 'refresh' \| 'search-minus' \| 'search-plus'` | The name of an icon (from [PrimeIcons](https://primevue.org/icons/)). |
-| `IPlotPointCounts` | `{ nbOfPoints: number; nbOfDrawnPoints: number }` | The value returned by the [`pointCounts()`](#methods) method. |
-| `IPlotMemoryUsage` | `{ levelOfDetail: number; logValues: number; gpu: number }` | The value returned by the [`memoryUsage()`](#methods) method. |
+| `PlotPointCounts` | `{ nbOfPoints: number; nbOfDrawnPoints: number }` | The value returned by the [`pointCounts()`](#methods) method. |
+| `PlotMemoryUsage` | `{ levelOfDetail: number; logValues: number; gpu: number }` | The value returned by the [`memoryUsage()`](#methods) method. |
 
 ### Data
 
-[`IPlotData`](#types):
+[`PlotData`](#types):
 
 | Property | Type | Description |
 |---|---|---|
-| `traces` | [`IPlotTrace`](#types)`[]` | The traces to plot. |
+| `traces` | [`PlotTrace`](#types)`[]` | The traces to plot. |
 | `xAxisTitle`, `yAxisTitle` | `string` | The axis titles. |
 | `xAxisRange`, `yAxisRange` | `[number, number]` | The range of an axis when the zoom is reset. By default, it fits the data. |
 
-[`IPlotTrace`](#types):
+[`PlotTrace`](#types):
 
 | Property | Type | Description |
 |---|---|---|
@@ -132,10 +132,10 @@ Also set the [`live`](#props) prop while the data is live, so that the last poin
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `data` | [`IPlotData`](#types) | (required) | The data to plot. |
+| `data` | [`PlotData`](#types) | (required) | The data to plot. |
 | `showLegend` | `boolean` | `true` | Whether to show the legend. The legend takes at most 40% of the width of the plot (with long trace names truncated, and shown in full when hovered), and is hidden if the plot is too narrow for it to be useful. |
 | `theme` | [`PlotTheme`](#types) | `'system'` | Whether to use light or dark mode, or whatever the system uses. |
-| `margins` | [`IPlotMargins`](#types) | | Margins shared with other plots, so that their plotting areas line up (see [`marginsUpdated`](#events)). |
+| `margins` | [`PlotMargins`](#types) | | Margins shared with other plots, so that their plotting areas line up (see [`marginsUpdated`](#events)). |
 | `appendTo` | `HTMLElement \| string` | `body` | Where to append our overlays (context menu, hover tooltip, etc.). |
 | `customContextMenu` | `boolean` | `false` | Whether to emit a [`contextMenu`](#events) event rather than show our own context menu. To have no context menu at all, set it and don't handle the `contextMenu` event. |
 | `renderer` | [`PlotRenderer`](#types) | `'auto'` | What to draw traces with. `'auto'` uses whichever is faster for the browser and the data: WebGL in Firefox, and in other browsers only when Canvas 2D would need to stroke at least 300,000 points for the visible traces (e.g., noisy traces whose X values are not sorted, or traces that are too short for our level of detail to be used, like 100 traces of 10,000 points, but not smooth phase plots, which only need a few thousand points); Canvas 2D otherwise. With `'webgl'`, traces are not drawn if WebGL is not available. Whenever WebGL is used, Canvas 2D takes over if WebGL is not available (with `'auto'`) or not precise enough for the current ranges (e.g., when zoomed in a lot). |
@@ -148,9 +148,9 @@ To draw traces like a plain uPlot plot would, i.e. without our WebGL renderer an
 
 | Event | Payload | Description |
 |---|---|---|
-| `marginsUpdated` | [`IPlotMargins`](#types) | The margins that the plot needs have changed. To line up several plots, pass the largest left and right margins of all of them to each plot's [`margins`](#props) prop. |
-| `csvExport` | [`IPlotCsvExportEvent`](#types) | An export to CSV has `'started'`, made `'progress'` (with a `percent`), or `'finished'` (with whether it was a `success`), so that its progress can be shown. |
-| `contextMenu` | [`IPlotContextMenuEvent`](#types) | Only with [`customContextMenu`](#props): the context menu was requested at `clientX`/`clientY`, with the `items` that our context menu would have shown. If `usingKeyboard` is true, the custom menu should take the keyboard focus. |
+| `marginsUpdated` | [`PlotMargins`](#types) | The margins that the plot needs have changed. To line up several plots, pass the largest left and right margins of all of them to each plot's [`margins`](#props) prop. |
+| `csvExport` | [`PlotCsvExportEvent`](#types) | An export to CSV has `'started'`, made `'progress'` (with a `percent`), or `'finished'` (with whether it was a `success`), so that its progress can be shown. |
+| `contextMenu` | [`PlotContextMenuEvent`](#types) | Only with [`customContextMenu`](#props): the context menu was requested at `clientX`/`clientY`, with the `items` that our context menu would have shown. If `usingKeyboard` is true, the custom menu should take the keyboard focus. |
 
 ### Properties
 
@@ -168,8 +168,8 @@ Available through a template ref:
 |---|---|
 | `resetMargins()` | Emit [`marginsUpdated`](#events) again, e.g. after the shared margins have been reset. |
 | `contextMenuHidden()` | Tell the plot that a custom context menu (see [`contextMenu`](#events)) has been hidden, so that it can get the keyboard focus back. |
-| `pointCounts()` | The number of points of the visible traces (`nbOfPoints`), and how many of them were last drawn (`nbOfDrawnPoints`), as an [`IPlotPointCounts`](#types). Meant for testing and benchmarking. |
-| `memoryUsage()` | The memory (in bytes) used by the component itself, not counting the data, as an [`IPlotMemoryUsage`](#types): by its levels of detail (`levelOfDetail`), by the logarithm of its values along logarithmic axes (`logValues`), and on the GPU (`gpu`). Meant for testing and benchmarking. |
+| `pointCounts()` | The number of points of the visible traces (`nbOfPoints`), and how many of them were last drawn (`nbOfDrawnPoints`), as an [`PlotPointCounts`](#types). Meant for testing and benchmarking. |
+| `memoryUsage()` | The memory (in bytes) used by the component itself, not counting the data, as an [`PlotMemoryUsage`](#types): by its levels of detail (`levelOfDetail`), by the logarithm of its values along logarithmic axes (`logValues`), and on the GPU (`gpu`). Meant for testing and benchmarking. |
 
 ### Interaction
 

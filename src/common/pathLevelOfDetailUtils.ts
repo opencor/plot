@@ -75,7 +75,7 @@ const STATE_NONE = 0; // We have nothing in progress, i.e. we are at the start o
 const STATE_GAP = 1; // We are in a gap.
 const STATE_SEGMENT = 2; // We have a segment in progress, from an anchor.
 
-export interface IPathLevelState {
+export interface PathLevelState {
   state: number;
   anchor: number; // Index of our anchor.
   anchorU: number; // Position of our anchor, relative to our origin and divided by our sizes.
@@ -89,7 +89,7 @@ export interface IPathLevelState {
   leftY: number;
 }
 
-const newState = (): IPathLevelState => {
+const newState = (): PathLevelState => {
   return {
     state: STATE_NONE,
     anchor: -1,
@@ -105,18 +105,18 @@ const newState = (): IPathLevelState => {
   };
 };
 
-export interface IPathLevel {
+export interface PathLevel {
   indices: Int32Array; // Index of our points, i.e. the ends of our segments and the first of our gaps.
   count: number; // Number of our points.
   level: number; // Our level, i.e. our tolerances are XSize / 4^level and YSize / 4^level.
   openEnd: boolean; // Whether our last point is the end of a segment that may still be extended (see reopenLevel()).
   processedCount: number; // Number of points of our trace that we have processed.
   snapshotIndex: number; // Index of the point just before which we took our snapshot, or -1 if we don't have any.
-  snapshotState: IPathLevelState; // Our state just before that point (see Note #5 above).
+  snapshotState: PathLevelState; // Our state just before that point (see Note #5 above).
   snapshotCount: number; // Our number of points just before that point.
 }
 
-export interface IPathLevelOfDetail {
+export interface PathLevelOfDetail {
   count: number; // Number of points that we have taken into account (see update()).
   xOrigin: number; // Origin of our values (see Note #6 above).
   yOrigin: number;
@@ -126,13 +126,13 @@ export interface IPathLevelOfDetail {
   xMax: number;
   yMin: number;
   yMax: number;
-  levels: IPathLevel[]; // Our levels, from the coarsest one (i.e. level 0) to the finest one that we have kept.
+  levels: PathLevel[]; // Our levels, from the coarsest one (i.e. level 0) to the finest one that we have kept.
   version: number; // Incremented whenever our levels may have changed (e.g., so that a consumer can cache them).
   xValues: Float64Array | undefined; // X values that we were last updated with (see Note #8 above).
   yValues: Float64Array | undefined; // Y values that we were last updated with.
 }
 
-export const create = (): IPathLevelOfDetail => {
+export const create = (): PathLevelOfDetail => {
   return {
     count: 0,
     xOrigin: 0,
@@ -150,7 +150,7 @@ export const create = (): IPathLevelOfDetail => {
   };
 };
 
-export const memoryUsage = (lod: IPathLevelOfDetail): number => {
+export const memoryUsage = (lod: PathLevelOfDetail): number => {
   // Return the number of bytes used by the given level of detail, i.e. by its levels.
 
   let res = 0;
@@ -162,7 +162,7 @@ export const memoryUsage = (lod: IPathLevelOfDetail): number => {
   return res;
 };
 
-const reset = (lod: IPathLevelOfDetail): void => {
+const reset = (lod: PathLevelOfDetail): void => {
   // Reset the given level of detail, keeping track of the fact that its levels may have changed, and of the values that
   // it was last updated with (since it gets reset while being updated, see update()).
 
@@ -175,7 +175,7 @@ const reset = (lod: IPathLevelOfDetail): void => {
   lod.yValues = yValues;
 };
 
-export const invalidate = (lod: IPathLevelOfDetail, from: number): void => {
+export const invalidate = (lod: PathLevelOfDetail, from: number): void => {
   // Invalidate the given level of detail from the given point onwards (i.e. those points may have changed), resetting
   // it if all of its points may have changed (so that we get new sizes and that our levels don't keep any of our
   // previous points, e.g. if we now have no points).
@@ -206,7 +206,7 @@ const size = (min: number, max: number): number => {
   return res;
 };
 
-const rebuild = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
+const rebuild = (lod: PathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Rebuild our sizes for the given points, and reset our levels (see Note #6 above).
 
   reset(lod);
@@ -263,7 +263,7 @@ const isGap = (xValues: Float64Array, yValues: Float64Array, index: number): boo
   return x - x !== 0 || y - y !== 0;
 };
 
-const reopenLevel = (level: IPathLevel, xValues: Float64Array, yValues: Float64Array, from: number): number => {
+const reopenLevel = (level: PathLevel, xValues: Float64Array, yValues: Float64Array, from: number): number => {
   // Remove the points of the given level that may change because of the given point onwards (see Note #5 above), i.e.
   // its open end, if any, and its points from the point before the given one onwards, as well as its last gap, if it
   // ends with one (so that consecutive gaps still get replaced with the first of them), and return the index of the
@@ -293,7 +293,7 @@ const reopenLevel = (level: IPathLevel, xValues: Float64Array, yValues: Float64A
   return count > 0 ? (indices[count - 1] as number) : -1;
 };
 
-const appendIndex = (level: IPathLevel, index: number): void => {
+const appendIndex = (level: PathLevel, index: number): void => {
   // Append the given index to the given level, making sure that it has room for it.
 
   if (level.count === level.indices.length) {
@@ -307,7 +307,7 @@ const appendIndex = (level: IPathLevel, index: number): void => {
   level.indices[level.count++] = index;
 };
 
-const startSegment = (state: IPathLevelState, anchor: number, anchorU: number, anchorV: number): void => {
+const startSegment = (state: PathLevelState, anchor: number, anchorU: number, anchorV: number): void => {
   state.state = STATE_SEGMENT;
   state.anchor = anchor;
   state.anchorU = anchorU;
@@ -317,7 +317,7 @@ const startSegment = (state: IPathLevelState, anchor: number, anchorU: number, a
   state.fullCone = true;
 };
 
-export const update = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
+export const update = (lod: PathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
   // Take the given points into account, from the first one that may have changed since we were last updated (see Note
   // #8 above), or that we haven't taken into account (see invalidate()), i.e. make sure that our sizes are big enough
   // for them, and rebuild our levels otherwise (see Note #6 above).
@@ -380,12 +380,7 @@ export const update = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: 
   lod.count = count;
 };
 
-const processLevel = (
-  lod: IPathLevelOfDetail,
-  level: IPathLevel,
-  xValues: Float64Array,
-  yValues: Float64Array
-): void => {
+const processLevel = (lod: PathLevelOfDetail, level: PathLevel, xValues: Float64Array, yValues: Float64Array): void => {
   // Process the points of our trace that the given level hasn't processed (see Note #5 above).
 
   const count = lod.count;
@@ -394,7 +389,7 @@ const processLevel = (
   const xSize = lod.xSize;
   const ySize = lod.ySize;
   const scale = 4 ** level.level;
-  let state: IPathLevelState;
+  let state: PathLevelState;
   let start: number;
 
   // Reopen our level, i.e. restore its snapshot if we can, or remove its points that may change otherwise.
@@ -502,11 +497,11 @@ const processLevel = (
 };
 
 export const updatedLevel = (
-  lod: IPathLevelOfDetail,
+  lod: PathLevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   levelNumber: number
-): IPathLevel | undefined => {
+): PathLevel | undefined => {
   // Return the given level, once up to date for the points that we have taken into account (see Note #5 above), unless
   // we don't have it (e.g., if it got dropped, see Note #7 above).
 
@@ -531,7 +526,7 @@ export const updatedLevel = (
   return level;
 };
 
-const isSegmentEnd = (state: IPathLevelState, dx: number, dy: number, squaredDistance: number): boolean => {
+const isSegmentEnd = (state: PathLevelState, dx: number, dy: number, squaredDistance: number): boolean => {
   // Return whether the point at the given position (relative to our anchor, in tolerances) can be the end of our
   // segment (see Note #2 above).
 
@@ -548,13 +543,7 @@ const isSegmentEnd = (state: IPathLevelState, dx: number, dy: number, squaredDis
   );
 };
 
-const extendSegment = (
-  state: IPathLevelState,
-  index: number,
-  dx: number,
-  dy: number,
-  squaredDistance: number
-): void => {
+const extendSegment = (state: PathLevelState, index: number, dx: number, dy: number, squaredDistance: number): void => {
   // Make the point at the given position (relative to our anchor, in tolerances) the end of our segment, and narrow
   // our cone so that it keeps our point within our tolerance of our segment (see Note #3 above).
 
@@ -604,12 +593,12 @@ const extendSegment = (
 };
 
 export const selectLevel = (
-  lod: IPathLevelOfDetail,
+  lod: PathLevelOfDetail,
   xValues: Float64Array,
   yValues: Float64Array,
   maxXTolerance: number,
   maxYTolerance: number
-): IPathLevel | undefined => {
+): PathLevel | undefined => {
   // Return our coarsest level which tolerances are no bigger than the given ones, once up to date (see updatedLevel()),
   // if any (otherwise, all of the points of our trace should be used).
   // Note: our level of detail must have taken all of the points of our trace into account (see update()).
