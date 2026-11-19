@@ -62,7 +62,13 @@ import { isContinuationOf } from './traceValues';
 //          the canvas of their plot once the current task is done with rendering (i.e. in a microtask), so that we
 //          only wait for the GPU once for all of our plots (e.g., when they all get zoomed in/out at once). A plot
 //          that gets redrawn in the meantime must cancel its pending copy (see cancelRender()), since it would
-//          otherwise end up on top of what gets drawn for it.
+//          otherwise end up on top of what gets drawn for it. However, Firefox seems to read our whole canvas back
+//          every time that a region of it gets copied, so copying N regions of our canvas costs O(N^2) (e.g., 16 plots
+//          would get drawn at about 15 FPS, against about 50 FPS if each of them was copied straight after being
+//          rendered). So, if we have several regions to copy, we first copy (the used part of) our canvas to a 2D
+//          canvas (i.e. our snapshot), from which we then copy our regions. This also makes copying several regions
+//          faster in Chrome and Safari (e.g., about 25% faster for 16 plots, and twice as fast while resizing them in
+//          Safari).
 
 const GAP_VALUE = 3.0e38;
 const GAP_THRESHOLD = '1.0e38';
@@ -492,6 +498,8 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
   let generation = 0;
   const availabilityListeners = new Set<() => void>();
   let pendingCopies: IPendingCopy[] = [];
+  let snapshot: HTMLCanvasElement | null = null;
+  let snapshotContext: CanvasRenderingContext2D | null = null;
   let atlasLeft = 0;
   let atlasTop = 0;
   let atlasShelfHeight = 0;
@@ -1007,13 +1015,45 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
     atlasTop = 0;
     atlasShelfHeight = 0;
 
+    // Copy (the used part of) our canvas to our snapshot, if we have several regions to copy (see Note #8 above).
+    // Note: we only ever grow our snapshot, so that we don't keep reallocating it.
+
+    let source: HTMLCanvasElement = canvas as HTMLCanvasElement;
+
+    if (copies.length > 1) {
+      let right = 0;
+      let bottom = 0;
+
+      for (const copy of copies) {
+        right = Math.max(right, copy.left + copy.width);
+        bottom = Math.max(bottom, copy.top + copy.height);
+      }
+
+      if (!snapshot) {
+        snapshot = document.createElement('canvas');
+        snapshotContext = snapshot.getContext('2d');
+      }
+
+      if (snapshotContext) {
+        if (snapshot.width < right || snapshot.height < bottom) {
+          snapshot.width = Math.max(snapshot.width, right);
+          snapshot.height = Math.max(snapshot.height, bottom);
+        }
+
+        snapshotContext.globalCompositeOperation = 'copy';
+        snapshotContext.drawImage(source, 0, 0, right, bottom, 0, 0, right, bottom);
+
+        source = snapshot;
+      }
+    }
+
     for (const copy of copies) {
       copy.target.save();
       copy.target.setTransform(1, 0, 0, 1, 0, 0);
       copy.target.globalAlpha = 1;
       copy.target.globalCompositeOperation = 'source-over';
       copy.target.drawImage(
-        canvas as HTMLCanvasElement,
+        source,
         copy.left,
         copy.top,
         copy.width,

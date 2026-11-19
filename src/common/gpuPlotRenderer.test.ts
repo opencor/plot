@@ -120,12 +120,22 @@ const COLORS: Record<string, number[]> = {
   'rgb(0 0 255 / 50%)': [0, 0, 255, 128]
 };
 
-const createFake2dContext = (): CanvasRenderingContext2D & { nbOfParsedColors: number } => {
+type IFake2dContext = CanvasRenderingContext2D & { nbOfParsedColors: number; drawImageCalls: unknown[][] };
+
+const createFake2dContext = (): IFake2dContext => {
+  // Note: this is also the 2D context of the snapshot of our renderer (see Note #8 of gpuPlotRenderer.ts), hence we
+  //       keep track of what gets drawn on it.
+
   const res = {
     fillStyle: '',
+    globalCompositeOperation: 'source-over',
     nbOfParsedColors: 0,
+    drawImageCalls: [] as unknown[][],
     clearRect: () => {},
     fillRect: () => {},
+    drawImage: (...args: unknown[]) => {
+      res.drawImageCalls.push(args);
+    },
     getImageData: () => {
       ++res.nbOfParsedColors;
 
@@ -133,7 +143,7 @@ const createFake2dContext = (): CanvasRenderingContext2D & { nbOfParsedColors: n
     }
   };
 
-  return res as unknown as CanvasRenderingContext2D & { nbOfParsedColors: number };
+  return res as unknown as IFake2dContext;
 };
 
 // A fake 2D context to render to.
@@ -603,7 +613,7 @@ describe('render()', () => {
   });
 
   it('renders the plots of a task to their own region of its canvas, and copies them once the task is done', async () => {
-    const { renderer, fake } = createRenderer();
+    const { renderer, fake, fake2d } = createRenderer();
     const items = [{ trace: traceWith(renderer, 5), color: '#f00', alpha: 1, lineWidth: 0, markerSize: 0 }];
     const target1 = createFakeTarget();
     const target2 = createFakeTarget();
@@ -627,7 +637,7 @@ describe('render()', () => {
 
     // Our canvas is now big enough for both of our regions, which get rendered next to each other (i.e. with our first
     // region at the top left of our canvas, which in WebGL coordinates is above our second region), and copied once our
-    // task is done.
+    // task is done, i.e. via our snapshot since we have several regions to copy (see Note #8 of gpuPlotRenderer.ts).
 
     fake.calls.length = 0;
 
@@ -643,8 +653,13 @@ describe('render()', () => {
 
     await Promise.resolve();
 
-    expect(target1.drawImageCalls.at(-1)).toEqual([fake.canvas, 0, 0, 100, 50, 10, 20, 100, 50]);
-    expect(target2.drawImageCalls.at(-1)).toEqual([fake.canvas, 100, 0, 50, 100, 10, 20, 50, 100]);
+    const snapshot = target1.drawImageCalls.at(-1)?.[0];
+
+    expect(snapshot).toBeInstanceOf(HTMLCanvasElement);
+    expect(snapshot).not.toBe(fake.canvas);
+    expect(fake2d.drawImageCalls.at(-1)).toEqual([fake.canvas, 0, 0, 150, 100, 0, 0, 150, 100]);
+    expect(target1.drawImageCalls.at(-1)).toEqual([snapshot, 0, 0, 100, 50, 10, 20, 100, 50]);
+    expect(target2.drawImageCalls.at(-1)).toEqual([snapshot, 100, 0, 50, 100, 10, 20, 50, 100]);
   });
 
   it('renders a region on a new shelf if it is not wide enough, and copies its regions if it is full', async () => {
