@@ -219,6 +219,40 @@ export const cancelFrame = (id: number): void => {
   calledFrameCallbacks?.delete(id);
 };
 
+// A method to observe the size of an element, i.e. to call a callback whenever the size of the element changes, and
+// to return a method to stop observing it.
+// Note: we use a ResizeObserver that is shared by all the elements that we observe (e.g., those of all of our plots),
+//       rather than one per element. Indeed, a browser calls the callback of each ResizeObserver in turn, running
+//       microtasks in between. So, with one ResizeObserver per plot, the changes that a plot makes in a microtask
+//       (e.g., uPlot resizing its canvas) would get applied before the next plot gets to read its size, which would
+//       force the browser to lay out our page again, for every plot. With a shared ResizeObserver, all of our callbacks
+//       get called before any of those changes get applied.
+
+let sizeObserver: ResizeObserver | null = null;
+const sizeCallbacks = new Map<Element, () => void>();
+
+export const observeSize = (element: Element, callback: () => void): (() => void) => {
+  sizeObserver ??= new ResizeObserver((entries: ResizeObserverEntry[]) => {
+    for (const entry of entries) {
+      try {
+        sizeCallbacks.get(entry.target)?.();
+      } catch (error: unknown) {
+        queueMicrotask(() => {
+          throw error;
+        });
+      }
+    }
+  });
+
+  sizeCallbacks.set(element, callback);
+  sizeObserver.observe(element, { box: 'border-box' });
+
+  return () => {
+    sizeCallbacks.delete(element);
+    sizeObserver?.unobserve(element);
+  };
+};
+
 // A method to resolve a colour if it is a CSS variable (e.g., "var(--theme-grid-color)"), so that it can be used on a
 // canvas. The CSS variable is resolved for the given element, i.e. where it is defined or inherited.
 // Note: this must only be called from a browser since it uses the DOM.

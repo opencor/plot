@@ -6,6 +6,7 @@ import {
   downloadFile,
   EMPTY_FLOAT64_ARRAY,
   formatError,
+  observeSize,
   requestFrame,
   sanitiseHtml,
   sleep,
@@ -383,6 +384,102 @@ describe('requestFrame() and cancelFrame()', () => {
     expect(calls).toEqual(['b']);
     expect(microtasks.length).toBe(1);
     expect(() => microtasks[0]?.()).toThrow(error);
+  });
+});
+
+// observeSize().
+
+describe('observeSize()', () => {
+  // A fake ResizeObserver, which keeps track of the elements that it observes and lets us resize some of them.
+  // Note: observeSize() creates its ResizeObserver the first time that it gets called, and keeps it, hence our fake is
+  //       installed once for all of our tests.
+
+  class FakeResizeObserver {
+    static instances: FakeResizeObserver[] = [];
+
+    callback: ResizeObserverCallback;
+    observed = new Set<Element>();
+
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = callback;
+
+      FakeResizeObserver.instances.push(this);
+    }
+
+    observe(element: Element): void {
+      this.observed.add(element);
+    }
+
+    unobserve(element: Element): void {
+      this.observed.delete(element);
+    }
+
+    resize(elements: Element[]): void {
+      this.callback(
+        elements.map((target) => ({ target }) as ResizeObserverEntry),
+        this as unknown as ResizeObserver
+      );
+    }
+  }
+
+  globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+
+  it('observes the size of its elements using one shared ResizeObserver', () => {
+    const element1 = document.createElement('div');
+    const element2 = document.createElement('div');
+    const calls: string[] = [];
+    const stop1 = observeSize(element1, () => calls.push('1'));
+    const stop2 = observeSize(element2, () => calls.push('2'));
+    const observer = FakeResizeObserver.instances[0] as FakeResizeObserver;
+
+    expect(FakeResizeObserver.instances.length).toBe(1);
+    expect([...observer.observed]).toEqual([element1, element2]);
+
+    // Only the callbacks of the elements that got resized get called.
+
+    observer.resize([element2]);
+    observer.resize([element1, element2]);
+
+    expect(calls).toEqual(['2', '1', '2']);
+
+    // An element that we stop observing doesn't get its callback called anymore.
+
+    stop1();
+
+    observer.resize([element1, element2]);
+
+    expect(calls).toEqual(['2', '1', '2', '2']);
+    expect([...observer.observed]).toEqual([element2]);
+
+    stop2();
+
+    expect(observer.observed.size).toBe(0);
+  });
+
+  it('calls its other callbacks if a callback throws, and reports its error once they have been called', () => {
+    const microtasks: VoidFunction[] = [];
+    const error = new Error('Some error.');
+    const element1 = document.createElement('div');
+    const element2 = document.createElement('div');
+    const calls: string[] = [];
+
+    spyOn(globalThis, 'queueMicrotask').mockImplementation((callback: VoidFunction) => {
+      microtasks.push(callback);
+    });
+
+    const stop1 = observeSize(element1, () => {
+      throw error;
+    });
+    const stop2 = observeSize(element2, () => calls.push('2'));
+
+    (FakeResizeObserver.instances[0] as FakeResizeObserver).resize([element1, element2]);
+
+    expect(calls).toEqual(['2']);
+    expect(microtasks.length).toBe(1);
+    expect(() => microtasks[0]?.()).toThrow(error);
+
+    stop1();
+    stop2();
   });
 });
 

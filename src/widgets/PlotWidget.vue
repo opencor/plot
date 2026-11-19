@@ -5775,26 +5775,20 @@ const updatePlot = (): void => {
 // and (re)observe it whenever it changes. Return a method to stop tracking the size of the element.
 
 const trackElementSize = (element: vue.WatchSource<HTMLElement | null>, callback: () => void): (() => void) => {
-  const resizeObserver = new ResizeObserver(() => {
-    callback();
-  });
+  let stopObservingElement: (() => void) | undefined;
   const stopWatchingElement = vue.watch(
     element,
-    (newElement: HTMLElement | null, oldElement: HTMLElement | null | undefined) => {
-      if (oldElement) {
-        resizeObserver.unobserve(oldElement);
-      }
+    (newElement: HTMLElement | null) => {
+      stopObservingElement?.();
 
-      if (newElement) {
-        resizeObserver.observe(newElement, { box: 'border-box' });
-      }
+      stopObservingElement = newElement ? common.observeSize(newElement, callback) : undefined;
     },
     { immediate: true, flush: 'post' }
   );
 
   return () => {
     stopWatchingElement();
-    resizeObserver.disconnect();
+    stopObservingElement?.();
   };
 };
 
