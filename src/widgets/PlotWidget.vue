@@ -165,7 +165,13 @@ import {
 } from '../common/gpuPlotRenderer';
 import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
 import * as pathLevelOfDetailUtils from '../common/pathLevelOfDetailUtils';
-import { type ILogValues, type IValuesStatistics, logValues, valuesStatistics } from '../common/traceValues';
+import {
+  type ILogValues,
+  type IValuesStatistics,
+  isContinuationOf,
+  logValues,
+  valuesStatistics
+} from '../common/traceValues';
 
 import '../assets/theme.css';
 
@@ -4866,6 +4872,7 @@ const prepareFrame = (u: uPlot): void => {
 
   pathLods = pathLods.slice(0, u.series.length - 1);
   traceLods = traceLods.slice(0, u.series.length - 1);
+  hoverSearches = hoverSearches.slice(0, u.series.length - 1);
 
   if (!canvas2D) {
     if (gpuPlotRenderer.isAvailable()) {
@@ -5040,6 +5047,24 @@ const formatHoverValue = (value: number): string => {
   });
 };
 
+// The last search for the hovered point of each of our traces which X values are not sorted (see hoveredIndex()), so
+// that if we search again with the same mouse pointer, radius, and plotting area (e.g., while a simulation is running),
+// and for a continuation of the same values (see traceValues.ts), then we only need to look at the new points.
+
+interface IHoverSearch {
+  xValues: Float64Array;
+  yValues: Float64Array;
+  nbOfPoints: number;
+  left: number;
+  top: number;
+  radius: number;
+  area: IPathArea;
+  index: number; // Index of the closest point, or -1 if there is none.
+  distance: number; // Its distance from the mouse pointer (or HOVER_DISTANCE if there is no closest point).
+}
+
+let hoverSearches: (IHoverSearch | undefined)[] = [];
+
 const hoveredIndex = (
   traceIndex: number,
   xValues: Float64Array,
@@ -5087,9 +5112,34 @@ const hoveredIndex = (
     return res;
   }
 
-  // Look at all the points of our trace.
+  // Look at all the points of our trace or, if we can carry on from our previous search (see IHoverSearch), only at its
+  // points from the last point of our previous search (which may have changed), unless it was our closest point (in
+  // which case we don't know which of our other points would be the closest one).
 
-  for (let i = 0; i < nbOfPoints; ++i) {
+  const previous = hoverSearches[traceIndex];
+  let from = 0;
+
+  if (
+    previous &&
+    previous.left === left &&
+    previous.top === top &&
+    previous.radius === radius &&
+    previous.area.width === width &&
+    previous.area.height === height &&
+    previous.area.xMin === xMin &&
+    previous.area.xMax === xMax &&
+    previous.area.yMin === yMin &&
+    previous.area.yMax === yMax &&
+    isContinuationOf(xValues, previous.xValues) &&
+    isContinuationOf(yValues, previous.yValues) &&
+    previous.index < previous.nbOfPoints - 1
+  ) {
+    from = Math.max(0, previous.nbOfPoints - 1);
+    res = previous.index;
+    closestDistance = previous.distance;
+  }
+
+  for (let i = from; i < nbOfPoints; ++i) {
     // Skip our point if its horizontal distance (less its radius) is greater than the distance of the closest point so
     // far (or than HOVER_DISTANCE pixels if we haven't found one yet), in which case it can't be as close to the mouse
     // pointer.
@@ -5113,6 +5163,18 @@ const hoveredIndex = (
       closestDistance = distance;
     }
   }
+
+  hoverSearches[traceIndex] = {
+    xValues,
+    yValues,
+    nbOfPoints,
+    left,
+    top,
+    radius,
+    area,
+    index: res,
+    distance: closestDistance
+  };
 
   return res;
 };
