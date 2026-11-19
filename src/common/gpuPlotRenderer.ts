@@ -656,9 +656,6 @@ export const createGpuPlotRenderer = (): IGpuPlotRenderer => {
       xValues = newXValues;
       yValues = newYValues;
 
-      levelOfDetailUtils.invalidate(lod, start);
-      pathLevelOfDetailUtils.invalidate(pathLod, start);
-
       // Use the first finite point as our origin, if we are uploading all of our data.
 
       if (start === 0) {

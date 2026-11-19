@@ -54,6 +54,13 @@
 //          of points when we update it, as well as our finer levels (since our levels have more and more points as they
 //          get finer). This means that our levels use, at most, about as much memory as the indices of the points of
 //          our trace. A dropped level only comes back if our levels get rebuilt (see Note #6).
+// Note #8: like our (column) level of detail (see Note #9 of levelOfDetailUtils.ts), we keep track of the X and Y
+//          values that we were last updated with, so that when we get updated with some values that are not a
+//          continuation of them (see traceValues.ts), we start again from scratch, and otherwise only from our last
+//          point (which may have changed), unless they are the very same values (i.e. the same arrays), which we assume
+//          haven't changed, since we may be shared (e.g., by the two renderers of a plot).
+
+import { isContinuationOf } from './traceValues';
 
 const NB_OF_LEVELS = 11; // Number of levels, i.e. from tolerances of XSize and YSize to tolerances 4^10 times smaller.
 const MIN_SIZE_RATIO = 2 ** -40; // Minimum size relative to our values (e.g., if they are all the same).
@@ -121,6 +128,8 @@ export interface IPathLevelOfDetail {
   yMax: number;
   levels: IPathLevel[]; // Our levels, from the coarsest one (i.e. level 0) to the finest one that we have kept.
   version: number; // Incremented whenever our levels may have changed (e.g., so that a consumer can cache them).
+  xValues: Float64Array | undefined; // X values that we were last updated with (see Note #8 above).
+  yValues: Float64Array | undefined; // Y values that we were last updated with.
 }
 
 export const create = (): IPathLevelOfDetail => {
@@ -135,7 +144,9 @@ export const create = (): IPathLevelOfDetail => {
     yMin: Number.POSITIVE_INFINITY,
     yMax: Number.NEGATIVE_INFINITY,
     levels: [],
-    version: 0
+    version: 0,
+    xValues: undefined,
+    yValues: undefined
   };
 };
 
@@ -152,13 +163,16 @@ export const memoryUsage = (lod: IPathLevelOfDetail): number => {
 };
 
 const reset = (lod: IPathLevelOfDetail): void => {
-  // Reset the given level of detail, keeping track of the fact that its levels may have changed.
+  // Reset the given level of detail, keeping track of the fact that its levels may have changed, and of the values that
+  // it was last updated with (since it gets reset while being updated, see update()).
 
-  const version = lod.version;
+  const { version, xValues, yValues } = lod;
 
   Object.assign(lod, create());
 
   lod.version = version + 1;
+  lod.xValues = xValues;
+  lod.yValues = yValues;
 };
 
 export const invalidate = (lod: IPathLevelOfDetail, from: number): void => {
@@ -304,9 +318,20 @@ const startSegment = (state: IPathLevelState, anchor: number, anchorU: number, a
 };
 
 export const update = (lod: IPathLevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
-  // Take the given points into account, from the first one that we haven't taken into account (see invalidate()), i.e.
-  // make sure that our sizes are big enough for them, and rebuild our levels otherwise (see Note #6 above).
+  // Take the given points into account, from the first one that may have changed since we were last updated (see Note
+  // #8 above), or that we haven't taken into account (see invalidate()), i.e. make sure that our sizes are big enough
+  // for them, and rebuild our levels otherwise (see Note #6 above).
   // Note: our levels themselves only get updated when they are needed (see Note #5 above and updatedLevel()).
+
+  if (xValues !== lod.xValues || yValues !== lod.yValues) {
+    invalidate(
+      lod,
+      isContinuationOf(xValues, lod.xValues) && isContinuationOf(yValues, lod.yValues) ? lod.count - 1 : 0
+    );
+  }
+
+  lod.xValues = xValues;
+  lod.yValues = yValues;
 
   if (lod.count >= count) {
     return;

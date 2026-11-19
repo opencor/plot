@@ -249,7 +249,15 @@ const sortedLengthOf = (xValues: Float64Array, yValues: Float64Array, count: num
 
 describe('create()', () => {
   it('creates an empty level of detail', () => {
-    expect(create()).toEqual({ count: 0, sortedLength: 0, levels: [], selection: undefined, nbOfSelections: 0 });
+    expect(create()).toEqual({
+      xValues: undefined,
+      yValues: undefined,
+      count: 0,
+      sortedLength: 0,
+      levels: [],
+      selection: undefined,
+      nbOfSelections: 0
+    });
   });
 });
 
@@ -400,6 +408,79 @@ describe('update()', () => {
 
     expect(lod.count).toBe(3);
     expect(lod.sortedLength).toBe(3);
+  });
+
+  it('processes all of its points again if they are not a continuation of the ones it was last updated with', () => {
+    // A level of detail may be shared, so it may get updated with some values (e.g., by one of its users), then with
+    // other values (e.g., by another of its users), and then with a continuation of the first values (e.g., by the
+    // first user again), in which case it must not keep what it did for the other values (see Note #9 of
+    // levelOfDetailUtils.ts).
+
+    const random = randomGenerator(963);
+    const [xBuffer, yBuffer] = randomPoints(random, 6000, true);
+    const [otherXValues, otherYValues] = randomPoints(random, 6000, true);
+    const xValues = xBuffer.subarray(0, 6000);
+    const yValues = yBuffer.subarray(0, 6000);
+    const lod = create();
+
+    update(lod, xBuffer.subarray(0, 5000), yBuffer.subarray(0, 5000), 5000);
+    update(
+      lod,
+      otherXValues,
+      otherYValues.map((y) => -y),
+      6000
+    );
+    update(lod, xValues, yValues, 6000);
+
+    const freshLod = levelOfDetail(xValues, yValues);
+
+    const usedBlocks = (levelOfDetail: ILevelOfDetail): number[][] => {
+      // Return the blocks of the given level of detail that are in use (i.e. not its spare capacity).
+
+      return levelOfDetail.levels.map((level, index) => {
+        const nbOfBlocks = Math.floor(6000 / 16 ** (index + 1));
+
+        return [
+          ...level.min.subarray(0, nbOfBlocks),
+          ...level.max.subarray(0, nbOfBlocks),
+          ...level.gap.subarray(0, nbOfBlocks)
+        ];
+      });
+    };
+
+    expect(lod.sortedLength).toBe(freshLod.sortedLength);
+    expect(usedBlocks(lod)).toEqual(usedBlocks(freshLod));
+    expect(selectedIndices(selectPoints(lod, xValues, yValues, 0, 6000, 0, 6000, 50))).toEqual(
+      selectedIndices(selectPoints(freshLod, xValues, yValues, 0, 6000, 0, 6000, 50))
+    );
+  });
+
+  it('processes a continuation from its last point, and nothing for the very same values', () => {
+    // Our last point may have changed in a continuation (e.g., a live simulation retrieves it again), but the very same
+    // values (i.e. the same arrays) are assumed not to have changed (see Note #9 of levelOfDetailUtils.ts).
+
+    const xBuffer = Float64Array.from({ length: 100 }, (_value, i) => i);
+    const yBuffer = new Float64Array(100);
+    const lod = create();
+
+    update(lod, xBuffer.subarray(0, 50), yBuffer.subarray(0, 50), 50);
+
+    // The very same values: nothing gets processed again, even if we invalidate nothing ourselves.
+
+    const xValues = xBuffer.subarray(0, 80);
+    const yValues = yBuffer.subarray(0, 80);
+
+    yBuffer[49] = 7;
+
+    update(lod, xValues, yValues, 80);
+
+    expect(lod.levels[0]?.max[3]).toBe(49);
+
+    yBuffer[79] = 9;
+
+    update(lod, xValues, yValues, 80);
+
+    expect(lod.levels[0]?.max[4]).not.toBe(79);
   });
 
   it('creates blocks of points, blocks of blocks, and so on', () => {

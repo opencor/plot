@@ -398,6 +398,46 @@ describe('update()', () => {
     }
   });
 
+  it('starts again from scratch if its points are not a continuation of the ones it was last updated with', () => {
+    // A path level of detail may be shared, so it may get updated with some values (e.g., by one of its users), then
+    // with other values (e.g., by another of its users), and then with a continuation of the first values (e.g., by the
+    // first user again), in which case it must not keep what it did for the other values (see Note #8 of
+    // pathLevelOfDetailUtils.ts).
+
+    const random = randomGenerator(852);
+    const [xBuffer, yBuffer] = randomWalk(random, 3000, true);
+    const [otherXValues, otherYValues] = randomWalk(random, 3000, true);
+    const xValues = xBuffer.subarray(0, 3000);
+    const yValues = yBuffer.subarray(0, 3000);
+    const lod = create();
+
+    update(lod, xBuffer.subarray(0, 2000), yBuffer.subarray(0, 2000), 2000);
+    updateLevels(lod, xBuffer.subarray(0, 2000), yBuffer.subarray(0, 2000));
+    update(lod, otherXValues, otherYValues, 3000);
+    updateLevels(lod, otherXValues, otherYValues);
+    update(lod, xValues, yValues, 3000);
+
+    checkLevels(lod, xValues, yValues, 3000);
+
+    const freshLod = levelOfDetail(xValues, yValues);
+
+    expect([lod.xSize, lod.ySize]).toEqual([freshLod.xSize, freshLod.ySize]);
+
+    for (const pathLevel of freshLod.levels) {
+      expect(levelIndices(lod, xValues, yValues, pathLevel.level)).toEqual(
+        levelIndices(freshLod, xValues, yValues, pathLevel.level)
+      );
+    }
+
+    // The very same values are assumed not to have changed, so nothing gets taken into account again.
+
+    const version = lod.version;
+
+    update(lod, xValues, yValues, 3000);
+
+    expect(lod.version).toBe(version);
+  });
+
   it('gets the same levels whether it processes its points incrementally or in one go', () => {
     // Some points which range is that of their first points, so that our sizes are the same either way (see Note #6 of
     // pathLevelOfDetailUtils.ts).
@@ -566,7 +606,7 @@ describe('invalidate()', () => {
 
     invalidate(lod, 0);
 
-    expect({ ...lod, version: 0 }).toEqual(create());
+    expect({ ...lod, version: 0, xValues: undefined, yValues: undefined } as IPathLevelOfDetail).toEqual(create());
     expect(lod.version).toBeGreaterThan(version);
 
     // So, it doesn't keep any of its previous points if it now has no points.

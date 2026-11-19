@@ -1084,11 +1084,12 @@ describe('level of detail', () => {
 
     expect(selectionUploads(fake)).toBe(1);
 
-    // Again for the same level if our points may have changed (e.g., if they got updated).
+    // Again for the same level if our points may have changed, i.e. if they got updated with a new view of the same
+    // buffers (as opposed to the very same values, which are assumed not to have changed).
 
     fake.calls.length = 0;
 
-    trace.update(xValues, yValues);
+    trace.update(xValues.subarray(0), yValues.subarray(0));
     renderer.render(createFakeTarget().context, { ...CURVE_AREA, xMin: -0.1, xMax: 0.1 }, items);
 
     expect(selectionUploads(fake)).toBe(1);

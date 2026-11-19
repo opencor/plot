@@ -165,13 +165,7 @@ import {
 } from '../common/gpuPlotRenderer';
 import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
 import * as pathLevelOfDetailUtils from '../common/pathLevelOfDetailUtils';
-import {
-  type ILogValues,
-  type IValuesStatistics,
-  isContinuationOf,
-  logValues,
-  valuesStatistics
-} from '../common/traceValues';
+import { type ILogValues, type IValuesStatistics, logValues, valuesStatistics } from '../common/traceValues';
 
 import '../assets/theme.css';
 
@@ -4424,27 +4418,20 @@ const linearPath = (
 // Note #2: our columns are our pixel columns (i.e. those of linearPath()), so our selected points include all the
 //          points that linearPath() would draw, i.e. our trace looks exactly the same.
 // Note #3: like our GPU plot renderer, we keep our level of detail up to date incrementally (see traceValues.ts).
-// Note #4: the level of detail of a trace is shared with our GPU plot renderer (see gpuFrameItemsOf()) and our hover
-//          (see hoveredIndex()), so that they don't need their own (and therefore more memory). Each of them
-//          invalidates it from the first point that may have changed since it last used it (see updatedTraceLod()),
-//          which is safe since invalidating it from an earlier point than needed only means that a few more points get
-//          processed again.
+// Note #4: the level of detail of a trace is shared with our GPU plot renderer (see gpuFrameItemsOf()), our hover (see
+//          hoveredIndex()), and useCanvas2D(), so that they don't need their own (and therefore more memory). It keeps
+//          track of the values that it was last updated with (see Note #9 of levelOfDetailUtils.ts), so each of them
+//          only needs to update it with the values that it uses (see updatedTraceLod()).
 // Note #5: if the X values of our trace are not sorted (e.g., a phase plot), then linearPath() has to go through all
 //          of its points. So, we first select the points that keep our trace within PATH_LOD_TOLERANCE canvas pixels of
 //          what it would otherwise look like (along each axis) using our path level of detail (see
 //          pathLevelOfDetailUtils.ts), and only give them to linearPath(). For a smooth trace, this means a few
 //          thousand rather than millions of points, but not for a noisy trace (which our path level of detail can't
 //          reduce, in which case we give all of its points to linearPath()). Like our level of detail, our path level
-//          of detail is shared with our GPU plot renderer (see gpuFrameItemsOf()) and with useCanvas2D(), with the same
-//          invalidation rules (see Note #4 above).
+//          of detail is shared with our GPU plot renderer (see gpuFrameItemsOf()) and with useCanvas2D() (see Note #4
+//          above).
 
 const PATH_LOD_TOLERANCE = 0.25; // In canvas pixels, i.e. our traces are off by at most about 0.35 canvas pixels.
-
-interface ILodUse {
-  xValues: Float64Array | undefined; // X values for which a level of detail was last updated by its user.
-  yValues: Float64Array | undefined; // Y values for which a level of detail was last updated by its user.
-  count: number; // Number of points for which a level of detail was last updated by its user.
-}
 
 interface ILinearPathPoints {
   xValues: Float64Array; // X values of the points to give to linearPath().
@@ -4454,11 +4441,7 @@ interface ILinearPathPoints {
 }
 
 let traceLods: levelOfDetailUtils.ILevelOfDetail[] = [];
-let canvasLodUses: ILodUse[] = [];
-let hoverLodUses: ILodUse[] = [];
-let autoLodUses: ILodUse[] = [];
 let pathLods: pathLevelOfDetailUtils.IPathLevelOfDetail[] = [];
-let pathLodUses: ILodUse[] = [];
 
 const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
   // Return the level of detail of the given trace, creating it if needed (see Note #4 above).
@@ -4469,30 +4452,16 @@ const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
 };
 
 const updatedTraceLod = (
-  uses: ILodUse[],
   traceIndex: number,
   xValues: Float64Array,
   yValues: Float64Array,
   count: number
 ): levelOfDetailUtils.ILevelOfDetail => {
-  // Return the level of detail of the given trace, once updated for the given points by the user whose uses are given,
-  // i.e. from the first point that may have changed since that user last used it (see Note #4 above).
+  // Return the level of detail of the given trace, once updated for the given points (see Note #4 above).
 
-  uses[traceIndex] ??= { xValues: undefined, yValues: undefined, count: 0 };
-
-  const use = uses[traceIndex] as ILodUse;
   const lod = traceLod(traceIndex);
-  const from =
-    use.count > 0 && isContinuationOf(xValues, use.xValues) && isContinuationOf(yValues, use.yValues)
-      ? Math.min(use.count - 1, count)
-      : 0;
 
-  levelOfDetailUtils.invalidate(lod, from);
   levelOfDetailUtils.update(lod, xValues, yValues, count);
-
-  use.xValues = xValues;
-  use.yValues = yValues;
-  use.count = count;
 
   return lod;
 };
@@ -4510,24 +4479,11 @@ const updatedPathLod = (
   yValues: Float64Array,
   count: number
 ): pathLevelOfDetailUtils.IPathLevelOfDetail => {
-  // Return the path level of detail of the given trace, once updated for the given points, i.e. from the first point
-  // that may have changed since we last used it (see Note #5 above).
+  // Return the path level of detail of the given trace, once updated for the given points (see Note #5 above).
 
-  pathLodUses[traceIndex] ??= { xValues: undefined, yValues: undefined, count: 0 };
-
-  const use = pathLodUses[traceIndex] as ILodUse;
   const lod = pathLod(traceIndex);
-  const from =
-    use.count > 0 && isContinuationOf(xValues, use.xValues) && isContinuationOf(yValues, use.yValues)
-      ? Math.min(use.count - 1, count)
-      : 0;
 
-  pathLevelOfDetailUtils.invalidate(lod, from);
   pathLevelOfDetailUtils.update(lod, xValues, yValues, count);
-
-  use.xValues = xValues;
-  use.yValues = yValues;
-  use.count = count;
 
   return lod;
 };
@@ -4605,7 +4561,7 @@ const linearPathPoints = (
 
   // Update our level of detail, from the first point that may have changed.
 
-  const lod = updatedTraceLod(canvasLodUses, seriesIndex - 1, xValues, yValues, count);
+  const lod = updatedTraceLod(seriesIndex - 1, xValues, yValues, count);
 
   // Only go through the points that keep our trace within our tolerance of what it would otherwise look like, if our X
   // values are not sorted (see Note #5 above).
@@ -4852,9 +4808,7 @@ const useCanvas2D = (u: uPlot): boolean => {
   for (const [traceIndex, xValues, yValues, nbOfTracePoints] of visibleTraces) {
     if (!props.levelOfDetail || nbOfTracePoints <= minNbOfPoints) {
       nbOfCanvasPoints += nbOfTracePoints;
-    } else if (
-      updatedTraceLod(autoLodUses, traceIndex, xValues, yValues, nbOfTracePoints).sortedLength === nbOfTracePoints
-    ) {
+    } else if (updatedTraceLod(traceIndex, xValues, yValues, nbOfTracePoints).sortedLength === nbOfTracePoints) {
       nbOfCanvasPoints += maxNbOfLodPoints;
     } else {
       nbOfCanvasPoints +=
@@ -4889,11 +4843,7 @@ const prepareFrame = (u: uPlot): void => {
 
   disposeGpuTraces(canvas2D ? 0 : u.series.length - 1);
 
-  canvasLodUses = canvasLodUses.slice(0, u.series.length - 1);
-  hoverLodUses = hoverLodUses.slice(0, u.series.length - 1);
-  autoLodUses = autoLodUses.slice(0, u.series.length - 1);
   pathLods = pathLods.slice(0, u.series.length - 1);
-  pathLodUses = pathLodUses.slice(0, u.series.length - 1);
   traceLods = traceLods.slice(0, u.series.length - 1);
 
   if (!canvas2D) {
@@ -5094,7 +5044,7 @@ const hoveredIndex = (
   let res = -1;
   let closestDistance = HOVER_DISTANCE;
 
-  const lod = updatedTraceLod(hoverLodUses, traceIndex, xValues, yValues, nbOfPoints);
+  const lod = updatedTraceLod(traceIndex, xValues, yValues, nbOfPoints);
 
   if (lod.sortedLength === nbOfPoints) {
     // Look at the finite points on either side of the X value that is under the mouse pointer, skipping any gap

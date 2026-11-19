@@ -40,6 +40,15 @@
 //          sorted. This means that, when looking for the first point that is in a given column, we look at the first
 //          finite point from a given point, skipping our gaps as described in Note #4 (i.e. the gaps between two finite
 //          points belong to the column of the second one).
+// Note #9: we keep track of the X and Y values that we were last updated with, so that when we get updated with some
+//          values that are not a continuation of them (see traceValues.ts), we process all of them again, and otherwise
+//          only from our last point (which may have changed), unless they are the very same values (i.e. the same
+//          arrays), which we assume haven't changed (e.g., when a plot gets redrawn without its data having changed).
+//          This matters since we may be shared (e.g., by the two renderers of a plot), i.e. we may have been last
+//          updated by another of our users, and with other values (e.g., if the traces of a plot have changed in the
+//          meantime), so a user cannot rely on the values that it last updated us with.
+
+import { isContinuationOf } from './traceValues';
 
 const BLOCK_SIZE = 16;
 
@@ -65,6 +74,8 @@ export interface ISelection {
 }
 
 export interface ILevelOfDetail {
+  xValues: Float64Array | undefined; // X values that we were last updated with (see Note #9 above).
+  yValues: Float64Array | undefined; // Y values that we were last updated with.
   count: number; // Number of points that we have processed.
   sortedLength: number; // Number of leading points whose finite points have sorted X values (see Note #8 above).
   levels: ILevel[]; // Our blocks of BLOCK_SIZE points, of BLOCK_SIZE^2 points, etc.
@@ -73,7 +84,15 @@ export interface ILevelOfDetail {
 }
 
 export const create = (): ILevelOfDetail => {
-  return { count: 0, sortedLength: 0, levels: [], selection: undefined, nbOfSelections: 0 };
+  return {
+    xValues: undefined,
+    yValues: undefined,
+    count: 0,
+    sortedLength: 0,
+    levels: [],
+    selection: undefined,
+    nbOfSelections: 0
+  };
 };
 
 export const memoryUsage = (lod: ILevelOfDetail): number => {
@@ -175,9 +194,20 @@ const previousFinitePoint = (
 };
 
 export const update = (lod: ILevelOfDetail, xValues: Float64Array, yValues: Float64Array, count: number): void => {
-  // Process the given points from the first one that we haven't processed (see invalidate()).
+  // Process the given points from the first one that may have changed since we were last updated (see Note #9 above),
+  // or that we haven't processed (see invalidate()).
   // Note #1: like convertPoints() in gpuPlotRenderer.ts, our loops only use local variables, so that they are fast.
   // Note #2: we use x - x === 0 to check whether x is finite since it is faster than Number.isFinite().
+
+  if (xValues !== lod.xValues || yValues !== lod.yValues) {
+    invalidate(
+      lod,
+      isContinuationOf(xValues, lod.xValues) && isContinuationOf(yValues, lod.yValues) ? Math.max(0, lod.count - 1) : 0
+    );
+  }
+
+  lod.xValues = xValues;
+  lod.yValues = yValues;
 
   const from = lod.count;
 
