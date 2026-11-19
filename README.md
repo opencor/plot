@@ -80,14 +80,20 @@ Notes:
 
 The component only goes through the points that are needed for a trace to look the same, so a trace with millions of points can be zoomed, panned, and hovered smoothly.
 
-When the data is updated, the work that has already been done is reused if the new values of a trace are a *continuation* of its previous ones, i.e. a view of the same buffer, from the same offset, and at least as long. Only the new values (and the last of the previous values, which may have changed) then get processed. So, for live data (e.g., while a simulation is running), allocate a buffer for all the values, fill it as values become available, and give the component a view of the part that is filled:
+The data is updated by giving the component a new `data` object, since changes made to an existing `data` object (e.g., to its `traces` array or to one of its traces) are not watched.
+
+When the data is updated, the work that has already been done is reused if the new values of a trace are a *continuation* of its previous ones, i.e. a view of the same buffer, from the same offset, and at least as long. Only the new values (and the last of the previous values, which may have changed) then get processed. The very same arrays (i.e. not new views) are assumed not to have changed at all. So, for live data (e.g., while a simulation is running), allocate a buffer for all the values, fill it as values become available, and give the component a view of the part that is filled:
 
 ```ts
-const buffer = new Float64Array(nbOfPoints);
+const xBuffer = new Float64Array(nbOfPoints);
+const yBuffer = new Float64Array(nbOfPoints);
 
-// Each time some new values have been added to the buffer:
+// Each time some new values have been added to the buffers:
 
-trace.y = buffer.subarray(0, nbOfValues);
+data.value = {
+  ...data.value,
+  traces: [{ ...trace, x: xBuffer.subarray(0, nbOfValues), y: yBuffer.subarray(0, nbOfValues) }]
+};
 ```
 
 Also set the `live` prop while the data is live, so that the last point of each visible trace gets marked, making its latest value easy to spot (even where a trace overlaps itself, e.g. in a phase plot).
