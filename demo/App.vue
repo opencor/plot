@@ -650,10 +650,10 @@ vue.onBeforeUnmount(() => {
 // Note #4: we zoom our instances by sending wheel events to them (i.e. to the element of uPlot that handles them, or to
 //          their X axis dragger to only zoom along their X axis), we pan them by sending them arrow key presses (i.e.
 //          to their plotting area), and we reset their zoom between interactions by sending them a "0" key press.
-// Note #5: an arrow key press pans an axis by KEYBOARD_PAN_FRACTION of its length (see PlotWidget.vue), so with a zoom
-//          of Z, our instances get from the middle of their data to one of its ends in 5 * (Z - 1) frames, and from
-//          one end to the other in 10 * (Z - 1) frames. Without any zoom, they get panned by half of their X range in
-//          5 frames.
+// Note #5: an arrow key press pans an axis by 10% of its length (see KEYBOARD_PAN_FRACTION in PlotWidget.vue), so
+//          with a zoom of Z, our instances get from the middle of their data to one of its ends in 5 * (Z - 1) frames,
+//          and from one end to the other in 10 * (Z - 1) frames. Without any zoom, they get panned by half of their X
+//          range in 5 frames.
 
 const BENCHMARK_DURATION = 5000; // Duration (in milliseconds) of each of our interactions.
 const BENCHMARK_MAX_ZOOM = 100; // Maximum zoom of our zoom interaction.
@@ -663,7 +663,6 @@ const BENCHMARK_RESET_DELAY = 500; // Delay (in milliseconds) for our zoom to be
 const BENCHMARK_LIVE_FRAMES = 300; // Number of frames in which we plot all of our data live.
 const BENCHMARK_MIN_RESIZE_SCALE = 0.6; // Smallest scale of our grid of instances, when we resize them.
 const BENCHMARK_RESIZE_FRAMES = 120; // Number of frames in which we shrink our instances and grow them back.
-const KEYBOARD_PAN_FRACTION = 0.1; // See Note #5 above.
 
 const zoomSteps = (zoom: number): number => {
   // Return the number of wheel events that are needed to zoom in by the given zoom.

@@ -21,7 +21,7 @@ type Candidate = {
   latest: string;
 };
 
-// Run a command synchronously, inheriting stdio.  Exit on failure.
+// Run a command synchronously, inheriting stdio, and exit if it fails.
 
 const run = (command: string, args: string[]): void => {
   const res = spawnSync({
@@ -42,8 +42,9 @@ const isVersionPinned = (version: string): boolean => {
   return /^\d/.test(version);
 };
 
-// Parse a dependency into its components: package name, version range, and optional alias name (e.g.,
-// "npm:@scope/pkg@^1.2.3" -> { packageName: "@scope/pkg", range: "^1.2.3", alias: "npm" }).
+// Parse a dependency into its components: package name, version range, and alias (i.e. the name of the dependency if
+// it is an alias for another package, e.g., ("typescript-6", "npm:typescript@^6.0.3") -> { packageName: "typescript",
+// range: "^6.0.3", alias: "typescript-6" }).
 
 const parseDependency = (name: string, version: string): Dependency => {
   if (version.startsWith('npm:')) {
@@ -92,7 +93,7 @@ const buildRange = (oldRange: string, newVersion: string): string => {
   return `${prefix}${newVersion}`;
 };
 
-// Check for updates to dependencies in a given directory.
+// Check for updates to the given dependencies.
 
 const checkUpdates = async (allDependencies: Record<string, string>, padEnd: number): Promise<Candidate[]> => {
   const candidates: Candidate[] = [];
@@ -271,7 +272,8 @@ const updateDependencies = async (dir: string): Promise<void> => {
 
   fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
 
-  // Run Bun commands to update dependencies and clean up.
+  // Install our updated dependencies from scratch, i.e. after removing our generated files (including our installed
+  // dependencies) and our lockfile.
 
   run('bun', ['clean']);
   fs.rmSync(path.join(dir, 'bun.lock'), { force: true });

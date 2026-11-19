@@ -8,9 +8,7 @@
   },
   "description": "A Vue 3 component for plotting data, using uPlot, Canvas 2D, and WebGL.",
   "files": [
-    "dist",
-    "README.md",
-    "LICENSE.txt"
+    "dist"
   ],
   "homepage": "https://github.com/opencor/plot",
   "keywords": [
@@ -36,9 +34,6 @@
   "type": "module",
   "types": "dist/index.d.ts",
   "version": "0.20261119.0",
-  "engines": {
-    "bun": ">=1.2.0"
-  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -47,7 +42,7 @@
     "./style.css": "./dist/opencor-plot.css"
   },
   "scripts": {
-    "build": "vite build --config vite.lib.config.ts && bun --bun scripts/type.check.ts --project tsconfig.lib.types.json && bun scripts/declarations.clean.ts",
+    "build": "vite build --config vite.lib.config.ts && bun scripts/type.check.ts --project tsconfig.lib.types.json && bun scripts/declarations.clean.ts",
     "build:demo": "vite build",
     "clean": "bun scripts/clean.ts",
     "dependencies:update": "bun scripts/dependencies.update.ts",
@@ -56,7 +51,7 @@
     "format:check": "bunx --bun biome format --max-diagnostics=none",
     "lint": "bunx --bun biome lint --fix --error-on-warnings --max-diagnostics=none && bunx stylelint '**/*.css' --allow-empty-input --fix",
     "lint:check": "bunx --bun biome lint --error-on-warnings --max-diagnostics=none && bunx stylelint '**/*.css' --allow-empty-input",
-    "typecheck": "bun --bun scripts/type.check.ts --noEmit",
+    "typecheck": "bun scripts/type.check.ts --noEmit",
     "version:new": "bun scripts/version.new.ts"
   },
   "dependencies": {

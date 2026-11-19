@@ -37,7 +37,7 @@ export const downloadFile = (filename: string, content: string | Blob, type: str
 };
 
 // A method to sanitise some HTML that may come from an untrusted source (e.g., the name of a trace or the title of an
-// axis in a UI JSON file, or the description of an issue), so that it can be rendered as HTML (e.g., using v-html).
+// axis), so that it can be rendered as HTML (e.g., using v-html).
 // Note #1: only a few formatting elements are kept (e.g., "<i>I<sub>K,r</sub></i>"), without any of their attributes.
 //          Any other element is replaced with its contents, unless its contents are not meant to be shown as text
 //          (e.g., a script), in which case it is removed altogether.
@@ -263,6 +263,6 @@ export const cssColor = (color: string, element: Element): string => {
   return cssVariable ? getComputedStyle(element).getPropertyValue(cssVariable).trim() || color : color;
 };
 
-// Some constants related to simulation data values.
+// An empty array of values (e.g., for a plot without any trace).
 
 export const EMPTY_FLOAT64_ARRAY = Object.freeze(new Float64Array(0));

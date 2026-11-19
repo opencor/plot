@@ -5,7 +5,7 @@
 Key characteristics:
 - Built as a [Vue 3](https://vuejs.org/) component using the [Composition API](https://vuejs.org/guide/extras/composition-api-faq).
 - Uses [uPlot](https://github.com/leeoniya/uPlot) under the hood, and draws traces using Canvas 2D or [WebGL](https://developer.mozilla.org/en-US/docs/Web/API/WebGL_API), whichever is faster for the browser and the data.
-- It does not rely on any UI framework (e.g., [PrimeVue](https://www.primefaces.org/primevue/)) or CSS framework (e.g., [Tailwind CSS](https://tailwindcss.com/)).
+- It does not rely on any UI framework (e.g., [PrimeVue](https://primevue.org/)) or CSS framework (e.g., [Tailwind CSS](https://tailwindcss.com/)).
 
 Contents:
 - [Installation](#installation)

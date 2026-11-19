@@ -380,7 +380,7 @@ const resize = (): void => {
 
 const resetMargins = (): void => {
   // Forget the margins that we last emitted, so that we emit our current margins (e.g., when the shared margins we are
-  // given are reset, see onResetMargins() in SimulationExperimentInteractiveView.vue).
+  // given have been reset).
 
   trackedMargins = undefined;
 
@@ -3185,7 +3185,7 @@ const isAxisEnd = (type: DragType): type is AxisEnd => {
   return type === 'w' || type === 'e' || type === 'n' || type === 's';
 };
 
-const rangeEndText = (range: Range, end: 0 | 1, logarithmic: boolean = false): string => {
+const rangeEndText = (range: Range, end: 0 | 1, logarithmic: boolean): string => {
   // Like Plotly (see its getEndText()), return the given (actual) end of the given (actual) range with four more
   // significant digits than needed to tell it apart from the other end of the range or, for a logarithmic axis, with
   // four significant digits (plus one for each power of ten by which the range is smaller than a power of ten) since
@@ -5397,7 +5397,7 @@ const queueHoverUpdate = (): void => {
 //       autorange, zoom, pan, or pinch, would have to be done in logarithmic space), we plot the decimal logarithm of
 //       its values (with a non-positive value becoming NaN, i.e. not being plotted), so that everything remains linear.
 //       So, the range of a logarithmic axis is the decimal logarithm of its actual range, and only what we show (i.e.
-//       our tick labels, hover tooltip, range editor, and axis ranges dialog) needs to be converted to/from actual
+//       our tick labels, hover tooltip, and range editor) needs to be converted to/from actual
 //       values (see actualValue() and plotValue()). Our image exports are of what we plot, so they are fine too, and
 //       our CSV export is of our actual data.
 

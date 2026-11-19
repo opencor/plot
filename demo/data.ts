@@ -48,7 +48,7 @@ const random = (seed: number): (() => number) => {
   };
 };
 
-export const traceColor = (index: number): string => {
+const traceColor = (index: number): string => {
   // Return the colour of the given trace, i.e. one of Tableau 10's colours for our first ten traces, and then colours
   // that are spread around the colour wheel (using the golden angle).
 

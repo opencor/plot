@@ -7,4 +7,3 @@ coverageSkipTestFiles = true
 coveragePathIgnorePatterns = ["test.setup.ts"]
 coverageThreshold = 1.0
 coverageReporter = ["text", "lcov"]
-coverageDir = "coverage"
