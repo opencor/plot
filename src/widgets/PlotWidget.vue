@@ -380,6 +380,20 @@ const resize = (): void => {
   }
 };
 
+const relayoutPlot = (): void => {
+  // Lay out our plot again (e.g., when our right margin changes), at the size of our container rather than at its
+  // current size, since our plot may have been enlarged for our previous layout (see our setSize hook in createPlot()),
+  // in which case it would otherwise remain enlarged (e.g., if our legend gets hidden when our container gets
+  // narrower).
+
+  const width = mainDivRef.value?.clientWidth || 0;
+  const height = mainDivRef.value?.clientHeight || 0;
+
+  if (plot && width > 0 && height > 0) {
+    setPlotSize(plot, width, height);
+  }
+};
+
 const resetMargins = (): void => {
   // Forget the margins that we last emitted, so that we emit our current margins (e.g., when the shared margins we are
   // given have been reset).
@@ -862,7 +876,7 @@ const syncLegendWidth = (): void => {
   if (newLegendWidth !== legendWidth) {
     legendWidth = newLegendWidth;
 
-    plot?.setSize({ width: plot.width, height: plot.height });
+    relayoutPlot();
   }
 };
 
@@ -5965,7 +5979,7 @@ vue.watch(
     }
 
     void vue.nextTick().then(() => {
-      plot?.setSize({ width: plot.width, height: plot.height });
+      relayoutPlot();
 
       // If we are not given shared margins anymore, then emit our margins again (since they may be needed to compute
       // new shared margins).

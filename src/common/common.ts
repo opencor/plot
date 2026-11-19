@@ -224,9 +224,9 @@ export const cancelFrame = (id: number): void => {
 // Note: we use a ResizeObserver that is shared by all the elements that we observe (e.g., those of all of our plots),
 //       rather than one per element. Indeed, a browser calls the callback of each ResizeObserver in turn, running
 //       microtasks in between. So, with one ResizeObserver per plot, the changes that a plot makes in a microtask
-//       (e.g., uPlot resizing its canvas) would get applied before the next plot gets to read its size, which would
-//       force the browser to lay out our page again, for every plot. With a shared ResizeObserver, all of our callbacks
-//       get called before any of those changes get applied.
+//       (e.g., Vue updating its legend) would get applied before the next plot gets to read its size, which would force
+//       the browser to lay out our page again, for every plot. With a shared ResizeObserver, all of our callbacks get
+//       called before any of those changes get applied.
 
 let sizeObserver: ResizeObserver | null = null;
 const sizeCallbacks = new Map<Element, () => void>();
