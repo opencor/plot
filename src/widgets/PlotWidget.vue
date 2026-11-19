@@ -360,8 +360,8 @@ const CSV_EXPORT_YIELD_INTERVAL = 25; // Time (in milliseconds) after which we y
 
 // Resize handling.
 
-const doResize = (): void => {
-  // Make sure that we have a valid size.
+const resize = (): void => {
+  // Resize our plot to fit its container, if it has a valid size.
 
   const width = mainDivRef.value?.clientWidth || 0;
   const height = mainDivRef.value?.clientHeight || 0;
@@ -379,14 +379,6 @@ const doResize = (): void => {
   } else if (plot.width !== width || plot.height !== height) {
     setPlotSize(plot, width, height);
   }
-};
-
-const resize = (): Promise<unknown> => {
-  // Resize our plot.
-
-  doResize();
-
-  return Promise.resolve();
 };
 
 const resetMargins = (): void => {
@@ -498,8 +490,7 @@ defineExpose({
   contextMenuHidden,
   memoryUsage,
   pointCounts,
-  resetMargins,
-  resize
+  resetMargins
 });
 
 const mainDivRef = vue.shallowRef<HTMLElement | null>(null);
@@ -5697,7 +5688,7 @@ const createPlot = (width: number, height: number): void => {
 const updatePlot = (): void => {
   // Make sure that we haven't been unmounted (e.g., if this was scheduled using vue.nextTick() just before we got
   // unmounted) and that we can be shown (e.g., we can't if we are in a hidden file tab, in which case we will be
-  // updated once we can be shown, see doResize()).
+  // updated once we can be shown, see resize()).
 
   const mainDiv = mainDivRef.value;
 
@@ -5804,7 +5795,7 @@ vue.onMounted(() => {
   //       need to coalesce our resizes since a resize observer gets notified at most once per frame.
 
   stopTrackingContainerSize = trackElementSize(mainDivRef, () => {
-    doResize();
+    resize();
   });
 
   // Start tracking the size of our legend so that we can update the layout of our plot when its width changes since it

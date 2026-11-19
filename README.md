@@ -128,7 +128,6 @@ Available through a template ref:
 
 | Method | Description |
 |---|---|
-| `resize()` | Resize the plot to fit its container. Not normally needed, since the component watches the size of its container. |
 | `resetMargins()` | Emit `marginsUpdated` again, e.g. after the shared margins have been reset. |
 | `contextMenuHidden()` | Tell the plot that a custom context menu has been hidden, so that it can get the keyboard focus back. |
 | `activeRenderer` | The renderer that was last used to draw traces: `'canvas'`, `'webgl'`, or `'none'`. |
