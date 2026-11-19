@@ -3274,9 +3274,12 @@ const applyWheelZoom = (): void => {
 
 const onWheel = (event: WheelEvent, type: DragType): void => {
   // Like Plotly, don't zoom when the mouse wheel is used over a corner, in which case we let the browser scroll the
-  // page.
+  // page. Neither do we zoom when the mouse wheel (or a trackpad) is used mostly horizontally (e.g., a horizontal swipe
+  // on a trackpad, or Shift+wheel on Windows), since we only zoom using the vertical delta (i.e. a horizontal wheel
+  // event would otherwise zoom by a factor of one, and therefore stop our axes from autoranging), in which case we let
+  // the browser scroll the page horizontally.
 
-  if (type === 'sw' || type === 'se') {
+  if (type === 'sw' || type === 'se' || Math.abs(event.deltaX) > Math.abs(event.deltaY) || event.deltaY === 0) {
     return;
   }
 
