@@ -67,7 +67,7 @@ The component fills its container, so the container must have a height. `@openco
 | `x`, `y` | `Float64Array` | The X and Y values of the trace. |
 | `xValue`, `yValue` | `string` | What the X and Y values are (e.g., the name of a model variable), used in the CSV export. |
 | `color` | `string` | The colour of the trace. |
-| `traceId` | `string` | An optional identifier that keeps the visibility of the trace when the data is updated. Otherwise, the trace is identified by its `name`, `xValue`, and `yValue`. |
+| `traceId` | `string` | An optional identifier that keeps the visibility of the trace when the data is updated. Otherwise, the trace is identified by its `name`, `xValue`, `yValue`, and `runLabel` (and, among traces that have the same ones, by their order), or by its position if it doesn't have a `name`, `xValue`, and `yValue`. |
 | `legendRank` | `number` | The optional rank of the trace in the legend (lower ranks first, 1000 by default). |
 | `runLabel` | `string` | An optional label that tells apart the X column of the trace from those of other runs in the CSV export. |
 

@@ -574,19 +574,33 @@ const resolvedColor = (color: string): string => {
 
 // Our traces' visibility, which we keep track of across data updates (e.g., while a simulation is running or when runs
 // get tracked in interactive mode).
+// Note: a trace is identified by its id, if it has one, or by its name, X and Y values, and run label, if it has them,
+//       or by its position otherwise. Several traces may have the same identification (e.g., the same variables for
+//       several runs that don't have a run label), so we also identify a trace by its rank among the traces that have
+//       the same identification, so that each trace keeps its own visibility.
 
-const traceVisibilityKey = (trace: IPlotTrace): string | undefined => {
-  // Return a key that identifies the given trace across data updates, if possible.
+const traceVisibilityKeys = (traces: IPlotTrace[]): string[] => {
+  // Return the keys that identify the given traces across data updates.
 
-  if (trace.traceId) {
-    return `id::${trace.traceId}`;
-  }
+  const nbOfTracesByKey = new Map<string, number>();
 
-  if (trace.name && trace.xValue && trace.yValue) {
-    return `expr::${trace.xValue}::${trace.yValue}::${trace.name}`;
-  }
+  return traces.map((trace: IPlotTrace, index: number) => {
+    let key: string;
 
-  return undefined;
+    if (trace.traceId) {
+      key = `id::${trace.traceId}`;
+    } else if (trace.name && trace.xValue && trace.yValue) {
+      key = `expr::${trace.xValue}::${trace.yValue}::${trace.name}::${trace.runLabel ?? ''}`;
+    } else {
+      key = `index::${index}`;
+    }
+
+    const rank = nbOfTracesByKey.get(key) ?? 0;
+
+    nbOfTracesByKey.set(key, rank + 1);
+
+    return `${key}::${rank}`;
+  });
 };
 
 const traceVisibilities = vue.shallowRef<boolean[]>([]);
@@ -674,19 +688,13 @@ vue.watch(
 
     const previousVisibilityByKey = new Map<string, boolean>();
 
-    (oldTraces ?? []).forEach((trace: IPlotTrace, index: number) => {
-      const key = traceVisibilityKey(trace);
-
-      if (key) {
-        previousVisibilityByKey.set(key, traceVisibilities.value[index] ?? true);
-      }
+    traceVisibilityKeys(oldTraces ?? []).forEach((key: string, index: number) => {
+      previousVisibilityByKey.set(key, traceVisibilities.value[index] ?? true);
     });
 
-    traceVisibilities.value = traces.map((trace: IPlotTrace) => {
-      const key = traceVisibilityKey(trace);
-
-      return key ? (previousVisibilityByKey.get(key) ?? true) : true;
-    });
+    traceVisibilities.value = traceVisibilityKeys(traces).map(
+      (key: string) => previousVisibilityByKey.get(key) ?? true
+    );
 
     // Highlight the trace which legend item is hovered, if any, if it still exists and is visible, or stop highlighting
     // it otherwise (see highlightTrace()).
