@@ -1,6 +1,6 @@
 <template>
   <Teleport v-if="levels.length" :to="appendTo ?? 'body'">
-    <div ref="containerRef" class="opencor-plot-theme opencor-context-menu" :class="{ 'opencor-plot-dark-mode': darkMode }">
+    <div ref="containerRef" class="opencor-plot-theme opencor-context-menu" :class="{ 'opencor-plot-dark-mode': darkMode }" :style="themeStyle">
       <!--
       Note: our menu and its open submenu, if any, are our levels, which are shown next to one another (rather than
             nested), each of them being a list that can get the keyboard focus (see onKeyDown()), with its focused
@@ -85,6 +85,7 @@ const props = defineProps<{
   items: ContextMenuItem[];
   appendTo?: HTMLElement | string;
   darkMode?: boolean;
+  themeStyle?: Record<string, string>;
 }>();
 
 const emit = defineEmits<{

@@ -8,7 +8,8 @@
  * Note #2: our theme is applied to the root element of our plot (see PlotWidget.vue) and to our overlays (e.g., our
  *          hover tooltip and our context menu, see ContextMenuWidget.vue), since they may be appended elsewhere (see
  *          appendTo) and would therefore not inherit our theme. This is also why our theme is not scoped to a
- *          particular component.
+ *          particular component. For the same reason, our overlays get our public CSS variables from our plot (see
+ *          updateOverlayThemeStyle() in PlotWidget.vue).
  */
 
 .opencor-plot-theme {

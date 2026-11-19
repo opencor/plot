@@ -128,9 +128,9 @@
         </button>
       </div>
     </div>
-    <ContextMenuWidget v-if="!customContextMenu" ref="contextMenuRef" :items="contextMenuItems" :appendTo="appendTo" :darkMode="isDarkMode" @hide="onContextMenuHide" />
+    <ContextMenuWidget v-if="!customContextMenu" ref="contextMenuRef" :items="contextMenuItems" :appendTo="appendTo" :darkMode="isDarkMode" :themeStyle="overlayThemeStyle" @hide="onContextMenuHide" />
     <Teleport v-if="hover" :to="appendTo ?? 'body'">
-      <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': isDarkMode }">
+      <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': isDarkMode }" :style="overlayThemeStyle">
         <div class="hover-tooltip-header">
           <span v-if="data.xAxisTitle" class="hover-tooltip-name" v-html="common.sanitiseHtml(data.xAxisTitle)" />
           <span class="hover-tooltip-value">{{ hover.x }}</span>
@@ -528,6 +528,58 @@ const onPrefersColorSchemeChange = (event: MediaQueryListEvent): void => {
 const isDarkMode = vue.computed<boolean>(() => {
   return props.theme === 'dark' || (!systemUsesLightMode.value && props.theme !== 'light');
 });
+
+// The public CSS variables of our theme (see theme.css) that are set on our ancestors, which our overlays (i.e. our
+// hover tooltip and our context menu) get from us, since they may be appended elsewhere (see appendTo) and would
+// therefore not inherit them. They are updated whenever an overlay is shown (see updateOverlayThemeStyle()).
+
+const THEME_VARIABLES = [
+  '--opencor-plot-background',
+  '--opencor-plot-text-color',
+  '--opencor-plot-muted-text-color',
+  '--opencor-plot-primary-color',
+  '--opencor-plot-grid-color',
+  '--opencor-plot-zero-line-color',
+  '--opencor-plot-hidden-trace-color',
+  '--opencor-plot-hover-background',
+  '--opencor-plot-overlay-background',
+  '--opencor-plot-overlay-border-color',
+  '--opencor-plot-overlay-text-color',
+  '--opencor-plot-overlay-shadow',
+  '--opencor-plot-border-radius',
+  '--opencor-plot-focus-ring-width',
+  '--opencor-plot-focus-ring-color'
+];
+
+const overlayThemeStyle = vue.shallowRef<Record<string, string>>({});
+
+const updateOverlayThemeStyle = (): void => {
+  const mainDiv = mainDivRef.value;
+
+  if (!mainDiv) {
+    return;
+  }
+
+  const computedStyle = getComputedStyle(mainDiv);
+  const style: Record<string, string> = {};
+  let changed = false;
+
+  for (const variable of THEME_VARIABLES) {
+    const value = computedStyle.getPropertyValue(variable);
+
+    if (value) {
+      style[variable] = value;
+    }
+
+    if (value !== (overlayThemeStyle.value[variable] ?? '')) {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    overlayThemeStyle.value = style;
+  }
+};
 
 // Our theme colours, which use our theme's CSS variables (see theme.css), so that they can be customised.
 // Note: a canvas doesn't understand CSS variables, so we resolve them (see resolvedColor()) for what gets drawn on
@@ -1033,6 +1085,8 @@ const showContextMenu = (event: MouseEvent): void => {
       items: contextMenuItems.value
     });
   } else {
+    updateOverlayThemeStyle();
+
     void contextMenuRef.value?.show(event);
   }
 };
@@ -5275,6 +5329,10 @@ const updateHover = (): void => {
   const mainDivRect = mainDiv.getBoundingClientRect();
   const pxRatio = uPlot.pxRatio;
   const guideWidth = lineWidth(pxRatio);
+
+  if (!hover.value) {
+    updateOverlayThemeStyle();
+  }
 
   hover.value = {
     clientX: mainDivRect.left + rect.left + left,
