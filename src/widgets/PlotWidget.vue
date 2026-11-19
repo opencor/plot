@@ -96,9 +96,10 @@
           stroke-width="2"
         />
       </svg>
-      <div v-if="showLegend && legendItems.length" ref="legendRef" class="legend"
+      <div v-if="legendShown" ref="legendRef" class="legend"
         :style="{
           left: `${legendLeft}px`,
+          maxWidth: legendMaxWidth ? `${legendMaxWidth}px` : undefined,
           top: `${plotRect?.top ?? 0}px`,
           maxHeight: plotRect ? `${plotRect.height}px` : undefined,
           visibility: plotRect ? undefined : 'hidden',
@@ -115,7 +116,7 @@
           :aria-pressed="legendItem.visible"
           @click="onLegendClick($event, legendItem.index)"
           @dblclick="onLegendDoubleClick(legendItem.index)"
-          @pointerenter="onLegendPointerEnter($event, legendItem.index)"
+          @pointerenter="onLegendPointerEnter($event, legendItem.index, legendItem.name)"
           @pointerleave="highlightTrace(null)"
           @focus="onLegendFocus($event, legendItem.index)"
           @blur="highlightTrace(null)"
@@ -317,6 +318,8 @@ const TITLE_FONT_SIZE = 13; // Font size of our axis titles.
 const LEGEND_FONT_SIZE = 12; // Font size of our legend items.
 const LEGEND_LEFT_MARGIN = 8; // Margin between our plotting area and our legend.
 const LEGEND_RIGHT_MARGIN = 8; // Margin between our legend (or last X tick label) and the right edge of our container.
+const LEGEND_MAX_WIDTH_RATIO = 0.4; // Maximum width of our legend, relative to the width of our container.
+const LEGEND_MIN_WIDTH = 96; // Minimum width of our legend (i.e. about 8 characters), or we hide it.
 const DEFAULT_LEGEND_RANK = 1000; // Like Plotly's default legend rank.
 const X_TICK_LABEL_BASELINE = TICK_FONT_SIZE + 1; // Like Plotly, the distance to the baseline of our X tick labels.
 const Y_TICK_LABEL_GAP = 1; // Like Plotly, the gap between our plotting area and our Y tick labels.
@@ -365,6 +368,8 @@ const doResize = (): void => {
   if (width <= 0 || height <= 0) {
     return;
   }
+
+  containerWidth.value = width;
 
   // Update our plot or its size, if needed.
 
@@ -641,12 +646,19 @@ const highlightTrace = (index: number | null): void => {
   currentPlot.redraw(false);
 };
 
-const onLegendPointerEnter = (event: PointerEvent, index: number): void => {
+const onLegendPointerEnter = (event: PointerEvent, index: number, name: string): void => {
   // Highlight the trace of the given legend item, but only if it is hovered using a mouse or a pen, i.e. not if it is
-  // touched since a touch only "hovers" a legend item while it is being touched, so our traces would only flash.
+  // touched since a touch only "hovers" a legend item while it is being touched, so our traces would only flash. Also,
+  // show the full name of the trace as a tooltip if it is truncated (see legendMaxWidth).
 
   if (event.pointerType !== 'touch') {
     highlightTrace(index);
+  }
+
+  if (event.currentTarget instanceof HTMLElement) {
+    const legendItem = event.currentTarget;
+
+    legendItem.title = legendItem.scrollWidth > legendItem.clientWidth ? plainText(name) : '';
   }
 };
 
@@ -753,6 +765,22 @@ const updatePlotRect = (u: uPlot): void => {
 };
 
 // The position and width of our legend.
+// Note: our legend is at most LEGEND_MAX_WIDTH_RATIO times as wide as our container (with the names of our traces
+//       truncated if needed, see onLegendPointerEnter()), so that it doesn't take most of the width of a narrow plot
+//       (e.g., with many instances side by side, or with long trace names), and it is hidden altogether if it can't
+//       be at least LEGEND_MIN_WIDTH wide. Until we know the width of our container (i.e. until we have been laid
+//       out), our legend is neither limited nor hidden, so that it doesn't make our plot get laid out again.
+
+const containerWidth = vue.ref<number>(0);
+
+const legendMaxWidth = vue.computed<number>(() => Math.floor(LEGEND_MAX_WIDTH_RATIO * containerWidth.value));
+
+const legendShown = vue.computed<boolean>(
+  () =>
+    props.showLegend &&
+    legendItems.value.length > 0 &&
+    (containerWidth.value === 0 || legendMaxWidth.value >= LEGEND_MIN_WIDTH)
+);
 
 const legendLeft = vue.computed<number>(() => {
   // Our legend is to the right of our plotting area, with a small gap in between.
@@ -5592,6 +5620,8 @@ const updatePlot = (): void => {
     return;
   }
 
+  containerWidth.value = width;
+
   isPlotOutdated = false;
 
   // Reset our zoom if we are plotting something else.
@@ -5815,10 +5845,12 @@ vue.watch(
   }
 );
 
-// Update the layout of our plot when our legend gets shown or hidden.
+// Update the layout of our plot when our legend gets shown or hidden, whether because of our showLegend property or of
+// the width of our container (see legendShown).
+// Note: our legend's size observer doesn't get told when our legend gets removed, so we need to do it ourselves.
 
 vue.watch(
-  () => props.showLegend,
+  () => legendShown.value,
   () => {
     void vue.nextTick().then(() => {
       syncLegendWidth();
@@ -6035,7 +6067,9 @@ vue.watch(
     color: inherit;
     font: inherit;
     line-height: 20px;
+    overflow: hidden;
     text-align: start;
+    text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
     transition: background-color 0.15s;

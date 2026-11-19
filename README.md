@@ -97,7 +97,7 @@ Also set the `live` prop while the data is live, so that the last point of each 
 | Prop | Type | Default | Description |
 |---|---|---|---|
 | `data` | `IPlotData` | (required) | The data to plot. |
-| `showLegend` | `boolean` | `true` | Whether to show the legend. |
+| `showLegend` | `boolean` | `true` | Whether to show the legend. The legend takes at most 40% of the width of the plot (with long trace names truncated, and shown in full when hovered), and is hidden if the plot is too narrow for it to be useful. |
 | `theme` | `'system' \| 'light' \| 'dark'` | `'system'` | Whether to use light or dark mode, or whatever the system uses. |
 | `margins` | `IPlotMargins` | | Margins shared with other plots, so that their plotting areas line up (see `marginsUpdated`). |
 | `appendTo` | `HTMLElement \| string` | `body` | Where to append our overlays (context menu, hover tooltip, etc.). |
