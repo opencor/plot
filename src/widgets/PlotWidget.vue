@@ -356,6 +356,7 @@ const HOVER_POINT_RADIUS = 4; // Radius of the points that we highlight when hov
 const HOVER_TOOLTIP_OFFSET = 16; // Distance between the mouse pointer and our hover tooltip.
 const HOVER_TOOLTIP_MARGIN = 4; // Minimum distance between our hover tooltip and the edges of the window.
 const HOVER_TOOLTIP_MAX_ROWS = 12; // Maximum number of traces listed in our hover tooltip.
+const CSV_EXPORT_YIELD_INTERVAL = 25; // Time (in milliseconds) after which we yield to the browser in a CSV export.
 
 // Resize handling.
 
@@ -1712,11 +1713,15 @@ const exportToCsv = async (): Promise<void> => {
 
     // Data rows, of which there are as many as the number of values of our longest X column, with empty cells for the
     // X columns (and their Y columns) that have fewer values.
-    // Note: we let people know about our progress at regular intervals and keep the UI responsive.
+    // Note: we let people know about our progress and keep the UI responsive every CSV_EXPORT_YIELD_INTERVAL
+    //       milliseconds, rather than after a given number of rows. Indeed, a browser makes us wait at least 4 ms when
+    //       we yield to it many times in a row, so yielding after every chunk of rows (i.e. 100 times) would make an
+    //       export take at least about 0.4 s, even for a few rows.
 
     const nbOfRows = Math.max(...groups.map((group) => group.trace.x.length));
     const chunkSize = Math.max(1, Math.floor(0.01 * nbOfRows));
     const percentPerRow = 100 / nbOfRows;
+    let lastYieldTime = performance.now();
 
     for (let row = 0; row < nbOfRows; ++row) {
       const rowParts: string[] = [];
@@ -1734,16 +1739,20 @@ const exportToCsv = async (): Promise<void> => {
       if ((row + 1) % chunkSize === 0 || row + 1 === nbOfRows) {
         addCsvChunk();
 
-        emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
+        if (performance.now() - lastYieldTime >= CSV_EXPORT_YIELD_INTERVAL) {
+          emit('csvExport', { type: 'progress', percent: Math.floor(percentPerRow * (row + 1)) });
 
-        await common.sleep(common.NO_DELAY);
+          await common.sleep(common.NO_DELAY);
 
-        // Stop exporting if we got unmounted in the meantime (e.g., if our plot got closed).
+          lastYieldTime = performance.now();
 
-        if (isUnmounted) {
-          successfulExport = false;
+          // Stop exporting if we got unmounted in the meantime (e.g., if our plot got closed).
 
-          return;
+          if (isUnmounted) {
+            successfulExport = false;
+
+            return;
+          }
         }
       }
     }
