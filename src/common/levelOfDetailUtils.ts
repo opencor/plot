@@ -651,6 +651,14 @@ const skipBlocks = (
   // Note: a block that extends beyond our end can be skipped too, since none of its points before our end can be what
   //       we are looking for, in which case we are done.
 
+  // Check our first point straight away, since it is often what we are looking for (e.g., a finite point when looking
+  // for the first point of a column, see lowerBound()), in which case there is no need to check whether we can skip
+  // some blocks.
+
+  if (from < end && isGap(xValues, yValues, from) === gaps) {
+    return from;
+  }
+
   const levels = lod.levels;
   let i = from;
 
