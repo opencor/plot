@@ -132,7 +132,7 @@ Available through a template ref:
 ### Interaction
 
 Like with [Plotly](https://plotly.com/javascript/):
-- **Plotting area:** drag to zoom (along one axis if the drag is mostly horizontal or vertical), use the mouse wheel to zoom around the mouse pointer, and double-click to reset the zoom.
+- **Plotting area:** drag to zoom (along one axis if the drag is mostly horizontal or vertical), Shift+drag to pan, use the mouse wheel to zoom around the mouse pointer, and double-click to reset the zoom.
 - **Middle of an axis:** drag to pan along that axis, use the mouse wheel to zoom along it, and double-click to reset its zoom.
 - **Ends of an axis and bottom corners:** drag to move an end of the axis, or click an end of the axis to type its value.
 - **Legend:** click a trace to show or hide it, double-click it to only show that trace, and hover it to highlight its trace.

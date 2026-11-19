@@ -2300,8 +2300,8 @@ const toggleLogAxis = (axisKey: AxisKey): void => {
 
 // Pointer interaction (i.e. using a mouse, a pen, or a finger), like with Plotly:
 //  - our plotting area ('nsew'): drag to zoom (along both axes or, for a mostly horizontal or vertical drag, along one
-//    of them), use the mouse wheel to zoom around the mouse pointer, and double-click (or double-tap) to reset the
-//    zoom;
+//    of them), Shift+drag to pan along both axes ('pan'), use the mouse wheel to zoom around the mouse pointer, and
+//    double-click (or double-tap) to reset the zoom;
 //  - the middle (80%) of our axes ('ew' and 'ns'): drag to pan along that axis;
 //  - the ends (10%) of our axes ('w', 'e', 'n', and 's') and the bottom corners of our plotting area ('sw' and 'se'):
 //    drag to move the corresponding end(s) of our axes, and click (or tap) one end of an axis to edit its value (see
@@ -2329,7 +2329,7 @@ const toggleLogAxis = (axisKey: AxisKey): void => {
 // Note #4: a finger (or a pen) doesn't get to scroll or zoom the page when it is used on our plotting area or our axes
 //          since they don't allow the browser to handle touch gestures (see touch-action below).
 
-type DragType = 'nsew' | 'ew' | 'w' | 'e' | 'ns' | 'n' | 's' | 'sw' | 'se';
+type DragType = 'pan' | 'nsew' | 'ew' | 'w' | 'e' | 'ns' | 'n' | 's' | 'sw' | 'se';
 
 interface IDragger {
   type: DragType;
@@ -2371,11 +2371,11 @@ const draggedAxes = (type: DragType): AxisKey[] => {
 
   const res: AxisKey[] = [];
 
-  if (type === 'nsew' || /[ew]/.test(type)) {
+  if (type === 'pan' || type === 'nsew' || /[ew]/.test(type)) {
     res.push('x');
   }
 
-  if (type === 'nsew' || /[ns]/.test(type)) {
+  if (type === 'pan' || type === 'nsew' || /[ns]/.test(type)) {
     res.push('y');
   }
 
@@ -2498,15 +2498,19 @@ const applyDrag = (currentDrag: IDrag): void => {
 
   // Move our axes or move one/both ends of our axes, depending on what we are dragging.
 
-  if (type === 'ew') {
+  if (type === 'pan' || type === 'ew') {
     const delta = (dx * (xRange[1] - xRange[0])) / rect.width;
 
     ranges.x = [xRange[0] - delta, xRange[1] - delta];
-  } else if (type === 'ns') {
+  }
+
+  if (type === 'pan' || type === 'ns') {
     const delta = (dy * (yRange[1] - yRange[0])) / rect.height;
 
     ranges.y = [yRange[0] + delta, yRange[1] + delta];
-  } else {
+  }
+
+  if (type !== 'pan' && type !== 'ew' && type !== 'ns') {
     if (type.includes('w')) {
       ranges.x = moveEnd(xRange, 0, dx, rect.width);
     } else if (type.includes('e')) {
@@ -2652,12 +2656,13 @@ const onDragMove = (event: PointerEvent): void => {
     !dragCursor.value &&
     Math.max(Math.abs(position.x - currentDrag.startX), Math.abs(position.y - currentDrag.startY)) >= MIN_DRAG
   ) {
-    dragCursor.value = currentDrag.type === 'nsew' ? 'crosshair' : `${currentDrag.type}-resize`;
+    dragCursor.value =
+      currentDrag.type === 'pan' ? 'move' : currentDrag.type === 'nsew' ? 'crosshair' : `${currentDrag.type}-resize`;
   }
 
-  // If we are dragging an axis (or a corner), then pan/move our axes, coalescing our pans/moves into one per frame, but
-  // only once our mouse has moved far enough from where our drag started (like Plotly, which otherwise considers that
-  // we are clicking, see onDragEnd()).
+  // If we are panning our plotting area or dragging an axis (or a corner), then pan/move our axes, coalescing our
+  // pans/moves into one per frame, but only once our mouse has moved far enough from where our drag started (like
+  // Plotly, which otherwise considers that we are clicking, see onDragEnd()).
 
   if (currentDrag.type !== 'nsew') {
     // Make sure that we have moved far enough from where our drag started.
@@ -5590,7 +5595,9 @@ const createPlot = (width: number, height: number): void => {
   // Note: uPlot's plotting area (i.e. its "over" element) gets destroyed with our plot, and its event listeners with
   //       it.
 
-  plot.over.addEventListener('pointerdown', (event: PointerEvent) => onDragStart(event, 'nsew'));
+  plot.over.addEventListener('pointerdown', (event: PointerEvent) =>
+    onDragStart(event, event.shiftKey ? 'pan' : 'nsew')
+  );
   plot.over.addEventListener('mousedown', onPressMouseDown);
   plot.over.addEventListener('dblclick', () => onDoubleClick('nsew'));
   plot.over.addEventListener('wheel', (event: WheelEvent) => onWheel(event, 'nsew'), {
