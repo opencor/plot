@@ -163,6 +163,7 @@ import {
   isPrecise as isGpuPlotPrecise
 } from '../common/gpuPlotRenderer';
 import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
+import * as pathLevelOfDetailUtils from '../common/pathLevelOfDetailUtils';
 import {
   type ILogValues,
   type IValuesStatistics,
@@ -451,6 +452,12 @@ const memoryUsage = (): IPlotMemoryUsage => {
   for (const lod of traceLods) {
     if (lod) {
       res.levelOfDetail += levelOfDetailUtils.memoryUsage(lod);
+    }
+  }
+
+  for (const lod of pathLods) {
+    if (lod) {
+      res.levelOfDetail += pathLevelOfDetailUtils.memoryUsage(lod);
     }
   }
 
@@ -4371,6 +4378,15 @@ const linearPath = (
 //          invalidates it from the first point that may have changed since it last used it (see updatedTraceLod()),
 //          which is safe since invalidating it from an earlier point than needed only means that a few more points get
 //          processed again.
+// Note #5: if the X values of our trace are not sorted (e.g., a phase plot), then linearPath() has to go through all
+//          of its points. So, we first select the points that keep our trace within PATH_LOD_TOLERANCE canvas pixels of
+//          what it would otherwise look like (along each axis) using our path level of detail (see
+//          pathLevelOfDetailUtils.ts), and only give them to linearPath(). For a smooth trace, this means a few
+//          thousand rather than millions of points, but not for a noisy trace (which our path level of detail can't
+//          reduce, in which case we give all of its points to linearPath()). Our path level of detail is only used for
+//          Canvas 2D (including to decide whether to use it, see useCanvas2D()), so it is not shared.
+
+const PATH_LOD_TOLERANCE = 0.25; // In canvas pixels, i.e. our traces are off by at most about 0.35 canvas pixels.
 
 interface ILodUse {
   xValues: Float64Array | undefined; // X values for which a level of detail was last updated by its user.
@@ -4389,6 +4405,8 @@ let traceLods: levelOfDetailUtils.ILevelOfDetail[] = [];
 let canvasLodUses: ILodUse[] = [];
 let hoverLodUses: ILodUse[] = [];
 let autoLodUses: ILodUse[] = [];
+let pathLods: pathLevelOfDetailUtils.IPathLevelOfDetail[] = [];
+let pathLodUses: ILodUse[] = [];
 
 const traceLod = (traceIndex: number): levelOfDetailUtils.ILevelOfDetail => {
   // Return the level of detail of the given trace, creating it if needed (see Note #4 above).
@@ -4426,8 +4444,82 @@ const updatedTraceLod = (
 
   return lod;
 };
+const updatedPathLod = (
+  traceIndex: number,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  count: number
+): pathLevelOfDetailUtils.IPathLevelOfDetail => {
+  // Return the path level of detail of the given trace, once updated for the given points, i.e. from the first point
+  // that may have changed since we last used it (see Note #5 above).
+
+  pathLodUses[traceIndex] ??= { xValues: undefined, yValues: undefined, count: 0 };
+  pathLods[traceIndex] ??= pathLevelOfDetailUtils.create();
+
+  const use = pathLodUses[traceIndex] as ILodUse;
+  const lod = pathLods[traceIndex] as pathLevelOfDetailUtils.IPathLevelOfDetail;
+  const from =
+    use.count > 0 && isContinuationOf(xValues, use.xValues) && isContinuationOf(yValues, use.yValues)
+      ? Math.min(use.count - 1, count)
+      : 0;
+
+  pathLevelOfDetailUtils.invalidate(lod, from);
+  pathLevelOfDetailUtils.update(lod, xValues, yValues, count);
+
+  use.xValues = xValues;
+  use.yValues = yValues;
+  use.count = count;
+
+  return lod;
+};
+
+const canvasPathLevel = (
+  traceIndex: number,
+  xValues: Float64Array,
+  yValues: Float64Array,
+  count: number,
+  area: IPathArea
+): pathLevelOfDetailUtils.IPathLevel | undefined => {
+  // Return the level of our path level of detail that keeps the given trace within our tolerance of what it would
+  // otherwise look like in the given plotting area, if any (see Note #5 above).
+
+  return pathLevelOfDetailUtils.selectLevel(
+    updatedPathLod(traceIndex, xValues, yValues, count),
+    (PATH_LOD_TOLERANCE * (area.xMax - area.xMin)) / area.width,
+    (PATH_LOD_TOLERANCE * (area.yMax - area.yMin)) / area.height
+  );
+};
+
 let canvasSelectionXValues = new Float64Array(0);
 let canvasSelectionYValues = new Float64Array(0);
+
+const canvasSelection = (
+  xValues: Float64Array,
+  yValues: Float64Array,
+  indices: Int32Array,
+  nbOfPoints: number
+): ILinearPathPoints => {
+  // Return the given points of the given trace, so that they can be given to linearPath().
+
+  if (canvasSelectionXValues.length < nbOfPoints) {
+    canvasSelectionXValues = new Float64Array(indices.length);
+    canvasSelectionYValues = new Float64Array(indices.length);
+  }
+
+  for (let i = 0; i < nbOfPoints; ++i) {
+    const index = indices[i] as number;
+
+    canvasSelectionXValues[i] = xValues[index] as number;
+    canvasSelectionYValues[i] = yValues[index] as number;
+  }
+
+  return {
+    xValues: canvasSelectionXValues,
+    yValues: canvasSelectionYValues,
+    index0: 0,
+    index1: nbOfPoints - 1
+  };
+};
 
 const linearPathPoints = (
   seriesIndex: number,
@@ -4454,11 +4546,16 @@ const linearPathPoints = (
 
   const lod = updatedTraceLod(canvasLodUses, seriesIndex - 1, xValues, yValues, count);
 
-  // Only go through our visible points, if our X values are sorted.
+  // Only go through the points that keep our trace within our tolerance of what it would otherwise look like, if our X
+  // values are not sorted (see Note #5 above).
 
   if (lod.sortedLength < count) {
-    return res;
+    const level = canvasPathLevel(seriesIndex - 1, xValues, yValues, count, area);
+
+    return level ? canvasSelection(xValues, yValues, level.indices, level.count) : res;
   }
+
+  // Only go through our visible points, if our X values are sorted.
 
   const [start, end] = levelOfDetailUtils.visibleRange(lod, xValues, yValues, count, area.xMin, area.xMax);
 
@@ -4477,24 +4574,7 @@ const linearPathPoints = (
   const xMax = xMin + nbOfColumns / xFactor;
   const selection = levelOfDetailUtils.selectPoints(lod, xValues, yValues, start, end, xMin, xMax, nbOfColumns);
 
-  if (canvasSelectionXValues.length < selection.nbOfPoints) {
-    canvasSelectionXValues = new Float64Array(selection.indices.length);
-    canvasSelectionYValues = new Float64Array(selection.indices.length);
-  }
-
-  for (let i = 0; i < selection.nbOfPoints; ++i) {
-    const index = selection.indices[i] as number;
-
-    canvasSelectionXValues[i] = xValues[index] as number;
-    canvasSelectionYValues[i] = yValues[index] as number;
-  }
-
-  return {
-    xValues: canvasSelectionXValues,
-    yValues: canvasSelectionYValues,
-    index0: 0,
-    index1: selection.nbOfPoints - 1
-  };
+  return canvasSelection(xValues, yValues, selection.indices, selection.nbOfPoints);
 };
 
 // The number of points that we went through for each of our traces the last time that we built its path using Canvas
@@ -4631,11 +4711,13 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 
 // Whether our traces are to be drawn using Canvas 2D rather than WebGL when our renderer is 'auto', based on how both
 // renderers perform in different browsers (using our demo's benchmark, which zooms, pans, and plots live our traces):
-//  - Chrome: Canvas 2D is faster (1.3 to 2.7 times) when it only needs to stroke a few points per pixel column of a
-//    trace, thanks to our level of detail (see linearPathPoints()), but WebGL is much faster (2 to 6 times) when all
-//    the points of a trace need to be stroked because its X values are not sorted (e.g., a phase plot), from about
-//    300,000 points between such traces, or because they are too short for our level of detail to be used (e.g., 1.5
-//    to 3.5 times for 30 to 100 traces of 10,000 points);
+//  - Chrome: Canvas 2D is faster when it only needs to stroke a few points of a trace, thanks to our levels of detail
+//    (see linearPathPoints()), i.e. a few points per pixel column of a trace which X values are sorted (1.3 to 2.7
+//    times faster) or a few thousand points of a smooth trace which X values are not sorted (e.g., a phase plot, 3 to
+//    10 times faster), but WebGL is much faster when many points of a trace need to be stroked, from about 300,000
+//    points between such traces, e.g. a noisy trace which X values are not sorted (2 to 6 times faster) or traces that
+//    are too short for our level of detail to be used (e.g., 1.5 to 3.5 times faster for 30 to 100 traces of 10,000
+//    points);
 //  - Safari: like Chrome, except that WebGL is even faster (2 to 20 times) whenever Canvas 2D needs to stroke many
 //    points (e.g., 100 traces of 10,000 points); and
 //  - Firefox: Canvas 2D takes a very long time to stroke a dense trace that goes up and down (e.g., noisy data), which
@@ -4643,10 +4725,12 @@ const gpuFrameItemsOf = (u: uPlot): IGpuPlotItem[] => {
 //    as rectangles), so WebGL is much faster (up to 40 times) for such traces.
 // So, we use Canvas 2D in browsers other than Firefox, unless it would need to stroke at least
 // AUTO_WEBGL_MIN_CANVAS_POINTS points for our visible traces, i.e. all the points of a trace, unless our level of detail
-// is used for it (see linearPathPoints()), in which case at most AUTO_CANVAS_POINTS_PER_COLUMN points per column.
+// is used for it (see linearPathPoints()), in which case at most AUTO_CANVAS_POINTS_PER_COLUMN points per column if its
+// X values are sorted, or the points of the level of our path level of detail that would be used otherwise.
 // Note: we only check whether the X values of a trace are sorted (using its level of detail, see
 //       levelOfDetailUtils.ts) if our visible traces have enough points between them for it to matter, so that we
-//       don't create a level of detail for a trace that doesn't otherwise need one.
+//       don't create a level of detail for a trace that doesn't otherwise need one. Also, our path level of detail is
+//       the one that Canvas 2D uses, so we only build it once, whichever renderer we end up using.
 
 const AUTO_WEBGL_MIN_CANVAS_POINTS = 300000;
 const AUTO_CANVAS_POINTS_PER_COLUMN = 4; // First, minimum, maximum, and last points of a column (see linearPath()).
@@ -4693,7 +4777,7 @@ const useCanvas2D = (u: uPlot): boolean => {
   }
 
   // Determine the number of points that Canvas 2D would need to stroke for our visible traces, i.e. all the points of a
-  // trace, unless our level of detail would be used for it (see linearPathPoints()).
+  // trace, unless our levels of detail would be used for it (see linearPathPoints()).
 
   const nbOfColumns = Math.ceil(area.width) + 1;
   const minNbOfPoints = levelOfDetailUtils.MIN_POINTS_PER_COLUMN * nbOfColumns;
@@ -4701,14 +4785,15 @@ const useCanvas2D = (u: uPlot): boolean => {
   let nbOfCanvasPoints = 0;
 
   for (const [traceIndex, xValues, yValues, nbOfTracePoints] of visibleTraces) {
-    if (
-      props.levelOfDetail &&
-      nbOfTracePoints > minNbOfPoints &&
+    if (!props.levelOfDetail || nbOfTracePoints <= minNbOfPoints) {
+      nbOfCanvasPoints += nbOfTracePoints;
+    } else if (
       updatedTraceLod(autoLodUses, traceIndex, xValues, yValues, nbOfTracePoints).sortedLength === nbOfTracePoints
     ) {
       nbOfCanvasPoints += maxNbOfLodPoints;
     } else {
-      nbOfCanvasPoints += nbOfTracePoints;
+      nbOfCanvasPoints +=
+        canvasPathLevel(traceIndex, xValues, yValues, nbOfTracePoints, area)?.count ?? nbOfTracePoints;
     }
   }
 
@@ -4742,6 +4827,8 @@ const prepareFrame = (u: uPlot): void => {
   canvasLodUses = canvasLodUses.slice(0, u.series.length - 1);
   hoverLodUses = hoverLodUses.slice(0, u.series.length - 1);
   autoLodUses = autoLodUses.slice(0, u.series.length - 1);
+  pathLods = pathLods.slice(0, u.series.length - 1);
+  pathLodUses = pathLodUses.slice(0, u.series.length - 1);
   traceLods = traceLods.slice(0, u.series.length - 1);
 
   if (!canvas2D) {
