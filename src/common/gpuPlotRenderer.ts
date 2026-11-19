@@ -80,6 +80,7 @@ const LOD_COLUMNS_PER_PIXEL = 2; // Number of columns per pixel for our level of
 const PATH_LOD_TOLERANCE = 0.25; // In pixels, like for Canvas 2D (see linearPathPoints() in PlotWidget.vue).
 const COVERAGE_CHANNELS = 4; // Number of channels of our coverage texture, i.e. of traces per batch (see Note #4).
 const MAX_ATLAS_SIZE = 4096; // Max width and height of our canvas when it holds several regions (see Note #8 above).
+const UPLOAD_CHUNK_SIZE = 65536; // Max number of points that we convert and upload at once (see uploadBuffer).
 
 const SEGMENT_VERTEX_SHADER = `#version 300 es
 precision highp float;
@@ -489,8 +490,10 @@ interface PendingCopy {
   targetTop: number; // Top of our region, in the canvas of our plot.
 }
 
-let uploadBuffer = new Float32Array(0);
-let selectionUploadBuffer = new Float32Array(0);
+// The buffer in which we convert the points that we upload, in chunks, so that it remains small however many points we
+// upload (e.g., 10 million points would otherwise need 80 MB, which we would keep).
+
+const uploadBuffer = new Float32Array(2 * UPLOAD_CHUNK_SIZE);
 
 export const createGpuPlotRenderer = (): GpuPlotRenderer => {
   let canvas: HTMLCanvasElement | null = null;
@@ -690,20 +693,18 @@ export const createGpuPlotRenderer = (): GpuPlotRenderer => {
         capacity = newCapacity;
       }
 
-      // Upload our (new) data.
+      // Upload our (new) data, in chunks (see uploadBuffer).
 
-      const nbOfValues = 2 * (newCount - start);
+      context.bindBuffer(context.ARRAY_BUFFER, buffer);
 
-      if (nbOfValues > 0) {
-        if (uploadBuffer.length < nbOfValues) {
-          uploadBuffer = new Float32Array(Math.max(nbOfValues, 2 * uploadBuffer.length));
-        }
+      for (let chunkStart = start; chunkStart < newCount; chunkStart += UPLOAD_CHUNK_SIZE) {
+        const chunkEnd = Math.min(chunkStart + UPLOAD_CHUNK_SIZE, newCount);
 
         [maxAbsX, maxAbsY] = convertPoints(
           newXValues,
           newYValues,
-          start,
-          newCount,
+          chunkStart,
+          chunkEnd,
           originX,
           originY,
           uploadBuffer,
@@ -711,8 +712,13 @@ export const createGpuPlotRenderer = (): GpuPlotRenderer => {
           maxAbsY
         );
 
-        context.bindBuffer(context.ARRAY_BUFFER, buffer);
-        context.bufferSubData(context.ARRAY_BUFFER, start * BYTES_PER_POINT, uploadBuffer, 0, nbOfValues);
+        context.bufferSubData(
+          context.ARRAY_BUFFER,
+          chunkStart * BYTES_PER_POINT,
+          uploadBuffer,
+          0,
+          2 * (chunkEnd - chunkStart)
+        );
       }
 
       context.bindBuffer(context.ARRAY_BUFFER, null);
@@ -827,37 +833,43 @@ export const createGpuPlotRenderer = (): GpuPlotRenderer => {
         from = 0;
       }
 
-      // Convert and upload our (changed) points, some of which may be gaps (see Note #4 and Note #8 of
-      // levelOfDetailUtils.ts, and Note #4 of pathLevelOfDetailUtils.ts), in which case they get uploaded as such (see
-      // Note #6 above).
+      // Convert and upload our (changed) points, in chunks (see uploadBuffer), some of which may be gaps (see Note #4
+      // and Note #8 of levelOfDetailUtils.ts, and Note #4 of pathLevelOfDetailUtils.ts), in which case they get
+      // uploaded as such (see Note #6 above).
 
-      const nbOfValues = 2 * (nbOfPoints - from);
-
-      if (nbOfValues > 0) {
-        if (selectionUploadBuffer.length < nbOfValues) {
-          selectionUploadBuffer = new Float32Array(Math.max(nbOfValues, 2 * selectionUploadBuffer.length));
-        }
-
-        const values = selectionUploadBuffer;
+      if (from < nbOfPoints) {
+        const values = uploadBuffer;
         const xOrigin = originX;
         const yOrigin = originY;
 
-        for (let i = from, j = 0; i < nbOfPoints; ++i, j += 2) {
-          const index = indices[i] as number;
-          const x = xs[index] as number;
-          const y = ys[index] as number;
+        context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
 
-          if (x - x === 0 && y - y === 0) {
-            values[j] = x - xOrigin;
-            values[j + 1] = y - yOrigin;
-          } else {
-            values[j] = GAP_VALUE;
-            values[j + 1] = GAP_VALUE;
+        for (let chunkStart = from; chunkStart < nbOfPoints; chunkStart += UPLOAD_CHUNK_SIZE) {
+          const chunkEnd = Math.min(chunkStart + UPLOAD_CHUNK_SIZE, nbOfPoints);
+
+          for (let i = chunkStart, j = 0; i < chunkEnd; ++i, j += 2) {
+            const index = indices[i] as number;
+            const x = xs[index] as number;
+            const y = ys[index] as number;
+
+            if (x - x === 0 && y - y === 0) {
+              values[j] = x - xOrigin;
+              values[j + 1] = y - yOrigin;
+            } else {
+              values[j] = GAP_VALUE;
+              values[j + 1] = GAP_VALUE;
+            }
           }
+
+          context.bufferSubData(
+            context.ARRAY_BUFFER,
+            chunkStart * BYTES_PER_POINT,
+            values,
+            0,
+            2 * (chunkEnd - chunkStart)
+          );
         }
 
-        context.bindBuffer(context.ARRAY_BUFFER, selectionBuffer);
-        context.bufferSubData(context.ARRAY_BUFFER, from * BYTES_PER_POINT, values, 0, nbOfValues);
         context.bindBuffer(context.ARRAY_BUFFER, null);
       }
 

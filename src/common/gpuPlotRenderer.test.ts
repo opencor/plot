@@ -331,6 +331,26 @@ describe('createTrace()', () => {
     expect(uploadedPoints(fake, 6)).toEqual([0, 0, 1, 1, 2, 8, 3, 3, 4, 4, 5, 5]);
   });
 
+  it('uploads its points in chunks', () => {
+    const { renderer, fake } = createRenderer();
+    const chunkSize = 65536;
+    const nbOfPoints = 2 * chunkSize + 3;
+    const xValues = Float64Array.from({ length: nbOfPoints }, (_, i) => i);
+    const yValues = Float64Array.from({ length: nbOfPoints }, (_, i) => 2 * i);
+
+    renderer.createTrace().update(xValues, yValues);
+
+    expect(calls(fake, 'bufferSubData').map(([, offset, , , length]) => [offset, length])).toEqual([
+      [0, 2 * chunkSize],
+      [chunkSize * 8, 2 * chunkSize],
+      [2 * chunkSize * 8, 6]
+    ]);
+
+    const points = uploadedPoints(fake, nbOfPoints);
+
+    expect(points.every((value, index) => value === (index % 2 ? 2 : 1) * Math.floor(index / 2))).toBe(true);
+  });
+
   it('uploads all of its points again if they are not a continuation of the previous ones', () => {
     const { renderer, fake } = createRenderer();
     const trace = renderer.createTrace();

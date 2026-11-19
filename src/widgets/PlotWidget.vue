@@ -50,6 +50,8 @@
         />
         <div v-if="rangeEditor" ref="rangeEditorRef" class="range-editor"
           contenteditable="true"
+          role="textbox"
+          :aria-label="rangeEditorLabel"
           spellcheck="false"
           :style="{
             left: `${rangeEditor.left}px`,
@@ -1087,7 +1089,7 @@ const showContextMenu = (event: MouseEvent): void => {
   } else {
     updateOverlayThemeStyle();
 
-    void contextMenuRef.value?.show(event);
+    void contextMenuRef.value?.show(event, contextMenuShownUsingKeyboard);
   }
 };
 
@@ -1168,13 +1170,10 @@ const showContextMenuUsingKeyboard = (): void => {
 };
 
 const onContextMenuHide = (): void => {
-  // Give the keyboard focus back to our plot if our context menu was shown using the keyboard, unless the keyboard
-  // focus has gone somewhere else in the meantime (i.e. somewhere else than <body> or our context menu, which may keep
-  // the keyboard focus while it is being hidden).
-
-  if (!contextMenuShownUsingKeyboard) {
-    return;
-  }
+  // Give the keyboard focus back to our plot, whether our context menu was shown using the keyboard or the mouse (since
+  // it takes the keyboard focus in both cases, e.g., so that it can be hidden using Escape), unless the keyboard focus
+  // has gone somewhere else in the meantime (i.e. somewhere else than <body> or our context menu, which may keep the
+  // keyboard focus while it is being hidden).
 
   contextMenuShownUsingKeyboard = false;
 
@@ -3179,6 +3178,14 @@ interface RangeEditor {
 
 const rangeEditor = vue.shallowRef<RangeEditor | null>(null);
 
+const rangeEditorLabel = vue.computed<string | undefined>(() => {
+  // Our range editor, as described to assistive technologies, i.e. the end of the range of an axis that it edits.
+
+  const editor = rangeEditor.value;
+
+  return editor ? `${editor.end ? 'Maximum' : 'Minimum'} of the ${editor.axisKey.toUpperCase()} axis` : undefined;
+});
+
 const isAxisEnd = (type: DragType): type is AxisEnd => {
   // Return whether the given drag type is one end of an axis.
 
@@ -4760,19 +4767,20 @@ const markerPaths: uPlot.Series.Points.PathBuilder = (u: uPlot, seriesIndex: num
 let frameRenderer: PlotActiveRenderer = 'canvas';
 let gpuFrameItems: GpuPlotItem[] = [];
 const gpuPointCounts: GpuPlotPointCounts = { nbOfPoints: 0, nbOfDrawnPoints: 0 };
-let gpuTraces: GpuPlotTrace[] = [];
+let gpuTraces: (GpuPlotTrace | undefined)[] = [];
 let warnedAboutWebGlNotBeingAvailable = false;
 
 const disposeGpuTraces = (fromIndex: number = 0): void => {
   for (const gpuTrace of gpuTraces.slice(fromIndex)) {
-    gpuTrace.dispose();
+    gpuTrace?.dispose();
   }
 
   gpuTraces = gpuTraces.slice(0, fromIndex);
 };
 
 const gpuFrameItemsOf = (u: uPlot): GpuPlotItem[] => {
-  // Make sure that the data of our visible traces is on the GPU and return what we need to draw for them.
+  // Make sure that the data of our visible traces is on the GPU, and that the data of our other traces is not (so that
+  // a hidden trace doesn't keep using GPU memory), and return what we need to draw for our visible traces.
 
   const res: GpuPlotItem[] = [];
   const pxRatio = uPlot.pxRatio;
@@ -4782,6 +4790,9 @@ const gpuFrameItemsOf = (u: uPlot): GpuPlotItem[] => {
     const color = props.data.traces[seriesIndex - 1]?.color;
 
     if (!u.series[seriesIndex]?.show || !xValues || !yValues || !color) {
+      gpuTraces[seriesIndex - 1]?.dispose();
+      gpuTraces[seriesIndex - 1] = undefined;
+
       continue;
     }
 
@@ -5579,8 +5590,12 @@ const createPlot = (width: number, height: number): void => {
 
   // Create our plot.
 
+  // Note: our axis colours are resolved whenever our plot gets drawn, like our other colours (e.g., see
+  //       drawZeroLines()), so that they follow the CSS variables of our theme (e.g., if they get changed on one of our
+  //       ancestors).
+
   const axis: uPlot.Axis = {
-    stroke: resolvedColor(themeColors.text),
+    stroke: () => resolvedColor(themeColors.text),
     font: tickFont(),
     labelFont: `${TITLE_FONT_SIZE}px ${fontFamily}`,
     labelGap: 0,
@@ -5589,7 +5604,7 @@ const createPlot = (width: number, height: number): void => {
       show: false
     },
     grid: {
-      stroke: resolvedColor(themeColors.grid),
+      stroke: () => resolvedColor(themeColors.grid),
       width: 1
     }
   };

@@ -405,7 +405,10 @@ const CONTEXT_MENU_SHOW_EVENT = 'opencor-context-menu-show';
 
 const contextMenuId = Symbol('ContextMenuWidget');
 
-const show = async (event: MouseEvent): Promise<void> => {
+const show = async (event: MouseEvent, usingKeyboard: boolean = false): Promise<void> => {
+  // Show our context menu where the given event happened, focusing its first item if it is shown using the keyboard
+  // (like a native context menu), so that it can be used with the keyboard straight away.
+
   window.dispatchEvent(
     new CustomEvent(CONTEXT_MENU_SHOW_EVENT, {
       detail: {
@@ -420,7 +423,19 @@ const show = async (event: MouseEvent): Promise<void> => {
     window.addEventListener('resize', onWindowBlurOrResize);
   }
 
-  levels.value = [{ items: props.items, parentIndex: -1, focusedIndex: -1, left: event.clientX, top: event.clientY }];
+  const level: Level = {
+    items: props.items,
+    parentIndex: -1,
+    focusedIndex: -1,
+    left: event.clientX,
+    top: event.clientY
+  };
+
+  if (usingKeyboard) {
+    level.focusedIndex = nextItemIndex(level, -1, 1);
+  }
+
+  levels.value = [level];
 
   await vue.nextTick();
 
