@@ -71,8 +71,9 @@ const checkSelection = (
   // number of columns, i.e. that, for each range of points (see selectPoints()), all of its points are selected if it
   // has up to four of them. Otherwise, for each run of finite points of that range, its first and last points, as well
   // as points with its minimum and maximum Y values, and no more than four points in total, are selected (with the
-  // first point of a run that follows a gap being selected on its own, and the rest of the run being selected that
-  // way), and for each gap of that range (i.e. points with a non-finite X or Y value), its first point is selected.
+  // first point of a run that starts our selection or that follows a gap being selected on its own, and the rest of
+  // the run being selected that way), and for each gap of that range (i.e. points with a non-finite X or Y value), its
+  // first point is selected.
   // Note: we determine our ranges of points and their runs in a brute-force way, i.e. without relying on
   //       levelOfDetailUtils.ts.
 
@@ -138,11 +139,11 @@ const checkSelection = (
         nbOfRunIndices += runIndices.length;
 
         if (finite) {
-          // A run that follows a gap has its first point selected on its own.
+          // A run that starts our selection or that follows a gap has its first point selected on its own.
 
           let checkedRunStart = runStart;
 
-          if (runStart > 0 && !isFinitePoint(xValues, yValues, runStart - 1) && runEnd - runStart > 1) {
+          if ((runStart === start || !isFinitePoint(xValues, yValues, runStart - 1)) && runEnd - runStart > 1) {
             expect(runIndices[0]).toBe(runStart);
 
             runIndices = runIndices.slice(1);
@@ -696,21 +697,24 @@ describe('selectPoints()', () => {
   });
 
   it('selects the first and last points, and the points with the minimum and maximum Y values, of a range', () => {
-    const xValues = Float64Array.from({ length: 10 }, (_value, i) => i);
-    const yValues = Float64Array.from([0, 1, 9, 2, 3, -9, 4, 5, 6, 7]);
-    const select = (y: Float64Array): number[] => {
-      return selectedIndices(selectPoints(levelOfDetail(xValues, y), xValues, y, 0, 10, 10, 20, 1));
+    const xValues = Float64Array.from({ length: 11 }, (_value, i) => i);
+    const select = (y: number[]): number[] => {
+      const yValues = Float64Array.from([5, ...y]);
+
+      return selectedIndices(selectPoints(levelOfDetail(xValues, yValues), xValues, yValues, 0, 11, 11, 21, 1));
     };
 
-    // Note: our X range is after all of our points, so they are all in the same range.
+    // Note: our X range is after all of our points, so they are all in the same range. However, our first point starts
+    //       our selection, so it gets selected on its own and the rest of our points (i.e. the given ones, from index
+    //       1) get selected as a range (see Note #5 of levelOfDetailUtils.ts).
 
-    expect(select(yValues)).toEqual([0, 2, 5, 9]);
+    expect(select([0, 1, 9, 2, 3, -9, 4, 5, 6, 7])).toEqual([0, 1, 3, 6, 10]);
 
     // A minimum or maximum that is the first or last point of our range isn't selected twice.
 
-    expect(select(Float64Array.from([-9, 1, 9, 2, 3, 0, 4, 5, 6, 7]))).toEqual([0, 2, 9]);
-    expect(select(Float64Array.from([0, 1, 2, 2, 3, -9, 4, 5, 6, 9]))).toEqual([0, 5, 9]);
-    expect(select(Float64Array.from([-9, 1, 2, 2, 3, 0, 4, 5, 6, 9]))).toEqual([0, 9]);
+    expect(select([-9, 1, 9, 2, 3, 0, 4, 5, 6, 7])).toEqual([0, 1, 3, 10]);
+    expect(select([0, 1, 2, 2, 3, -9, 4, 5, 6, 9])).toEqual([0, 1, 6, 10]);
+    expect(select([-9, 1, 2, 2, 3, 0, 4, 5, 6, 9])).toEqual([0, 1, 10]);
   });
 
   it('handles points with the same Y value', () => {

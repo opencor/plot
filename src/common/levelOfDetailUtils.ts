@@ -23,10 +23,11 @@
 //          gaps quickly, we skip the blocks that have no gap (when looking for the next gap) or no finite point (when
 //          looking for the next finite point). A range of points with many gaps may therefore have many selected points
 //          (e.g., all of its points if every other point is a gap), so our selection grows if needed.
-// Note #5: a path (e.g., our Canvas 2D path, see linearPath() in PlotWidget.vue) starts from the first point after a
-//          gap and only then starts drawing the points of a column. So, for a run of finite points that follows a gap,
-//          we select its first point and then the first, minimum, maximum, and last points of the rest of the run, so
-//          that what gets drawn is exactly the same as if all of its points were drawn.
+// Note #5: a path (e.g., our Canvas 2D path, see linearPath() in PlotWidget.vue) starts from its first point or from
+//          the first point after a gap, and only then starts drawing the points of a column. So, for a run of finite
+//          points that starts our selection (see selectPoints()) or that follows a gap, we select its first point and
+//          then the first, minimum, maximum, and last points of the rest of the run, so that what gets drawn is exactly
+//          the same as if all of its points were drawn.
 // Note #6: we keep track of the points that we last selected, and of the first point that may have changed since then.
 //          So, if a trace gets drawn for the same X range and number of columns as before (e.g., while a simulation is
 //          running, with a fixed X range), then we only select the points of the columns from the one that contains
@@ -350,6 +351,8 @@ const QUERY_MAX_VALUE = 3;
 const QUERY_HAS_GAP = 4;
 
 const queryResult = new Float64Array(5);
+
+let selectionStart = 0; // First point of the selection that we are making (see selectPoints() and Note #5 above).
 
 const resetQueryResult = (): void => {
   queryResult[QUERY_MIN_INDEX] = -1;
@@ -728,10 +731,11 @@ const selectFiniteRunPoints = (
   minIndex: number,
   maxIndex: number
 ): number => {
-  // Select the points of the given run of finite points, which minimum and maximum Y values are known, if it doesn't
-  // follow a gap. Otherwise, select its first point and the points of the rest of it (see Note #5 above).
+  // Select the points of the given run of finite points, which minimum and maximum Y values are known, unless it starts
+  // our selection or follows a gap, in which case select its first point and the points of the rest of it (see Note #5
+  // above).
 
-  if (start === 0 || !isGap(xValues, yValues, start - 1) || end - start === 1) {
+  if ((start !== selectionStart && !isGap(xValues, yValues, start - 1)) || end - start === 1) {
     return selectRunPoints(selection, nbOfPoints, start, end, minIndex, maxIndex);
   }
 
@@ -846,6 +850,9 @@ export const selectPoints = (
   const columnWidth = (xMax - xMin) / nbOfColumns;
   const boundary = (k: number): number => (k === nbOfColumns ? xMax : xMin + k * columnWidth);
   let selection = lod.selection;
+
+  selectionStart = start;
+
   let iteration = 0;
   let rangeStart = start;
   let nbOfPoints = 0;
