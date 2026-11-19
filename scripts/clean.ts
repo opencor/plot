@@ -2,7 +2,7 @@
 
 import fs from 'node:fs';
 
-for (const path of ['components.d.ts', 'coverage', 'demo/dist', 'dist', 'node_modules']) {
+for (const path of ['coverage', 'demo/dist', 'dist', 'node_modules']) {
   if (fs.existsSync(path)) {
     fs.rmSync(path, { recursive: true, force: true });
   }

@@ -25,6 +25,3 @@ coverage
 *.sw?
 
 *.tsbuildinfo
-
-# unplugin-vue-components
-components.d.ts

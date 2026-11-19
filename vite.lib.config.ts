@@ -1,8 +1,6 @@
 import vuePlugin from '@vitejs/plugin-vue';
 import * as vite from 'vite';
 
-import { componentsPlugin } from './vite.plugins.ts';
-
 export default vite.defineConfig({
   build: {
     lib: {
@@ -23,5 +21,5 @@ export default vite.defineConfig({
     target: 'esnext',
     copyPublicDir: false
   },
-  plugins: [vuePlugin(), componentsPlugin()]
+  plugins: [vuePlugin()]
 });
