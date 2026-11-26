@@ -252,6 +252,20 @@ export interface PlotMargins {
   right: number;
 }
 
+/**
+ * The current ranges of the axes of a plot, i.e. what the user sees after zooming, panning, or resetting the zoom. It is
+ * the payload of the `rangesUpdated` event, which is emitted whenever they change, and what the `setRanges()` method
+ * takes. To link the X axes of several plots, pass the X range that the `rangesUpdated` event of one of them gave to
+ * the `setRanges()` method of the others.
+ */
+
+export interface PlotRanges {
+  /** The current range of the X axis, i.e. its minimum and maximum values (even if the axis is logarithmic). */
+  x: [number, number];
+  /** The current range of the Y axis, i.e. its minimum and maximum values (even if the axis is logarithmic). */
+  y: [number, number];
+}
+
 /** The payload of the `csvExport` event when an export to CSV has started. */
 
 export interface PlotCsvExportStartedEvent {
@@ -411,6 +425,11 @@ const emit = defineEmits<{
    * all of them to the `margins` prop of each of them.
    */
   marginsUpdated: [newMargins: PlotMargins];
+  /**
+   * The current ranges of the axes have changed (e.g., after zooming, panning, or resetting the zoom, or after the data
+   * has been updated while an axis is autoranged), so that they can be shown or shared with other plots.
+   */
+  rangesUpdated: [newRanges: PlotRanges];
 }>();
 
 // Some constants (in CSS pixels, where relevant).
@@ -508,6 +527,26 @@ const resetMargins = (): void => {
   updateMarginsAsync();
 };
 
+const setRanges = (ranges: Partial<PlotRanges>): void => {
+  // Zoom into the given (actual) ranges, which we first convert to the ranges that we plot (see plotValue()).
+  // Note: we may be given some ranges before we got to plot some new data (see updatePlot()), in which case we must
+  //       first forget our zoom if we are plotting something else, or we would forget the given ranges instead.
+
+  resetZoomIfNeeded();
+
+  const plotRanges: Partial<Record<AxisKey, Range>> = {};
+
+  for (const axisKey of ['x', 'y'] as AxisKey[]) {
+    const range = ranges[axisKey];
+
+    if (range) {
+      plotRanges[axisKey] = [plotValue(axisKey, range[0]), plotValue(axisKey, range[1])];
+    }
+  }
+
+  zoomTo(plotRanges);
+};
+
 const contextMenuHidden = (): void => {
   // Our custom context menu has been hidden (see PlotContextMenuEvent), so do as if it was our context menu.
 
@@ -602,13 +641,21 @@ interface PlotMethods {
   pointCounts: () => PlotPointCounts;
   /** Emit the `marginsUpdated` event again (e.g., after the shared margins have been reset). */
   resetMargins: () => void;
+  /**
+   * Zoom into the given ranges (e.g., those that the `rangesUpdated` event of another plot gave), leaving the axes
+   * without a range as they are. The ranges are kept when the data gets updated, like when the user zooms, and they are
+   * ignored if any of them is not valid (e.g., if its minimum is not smaller than its maximum or, for a logarithmic
+   * axis, if it is not positive).
+   */
+  setRanges: (ranges: Partial<PlotRanges>) => void;
 }
 
 defineExpose<PlotMethods>({
   contextMenuHidden,
   memoryUsage,
   pointCounts,
-  resetMargins
+  resetMargins,
+  setRanges
 });
 
 const mainDivRef = vue.shallowRef<HTMLElement | null>(null);
@@ -627,6 +674,8 @@ let stopTrackingContainerSize: (() => void) | undefined;
 let stopTrackingLegendSize: (() => void) | undefined;
 let marginsUpdatePending = false;
 let trackedMargins: PlotMargins | undefined;
+let rangesUpdatePending = false;
+let trackedRanges: PlotRanges | undefined;
 
 // Whether our axes are logarithmic, which can be changed using our context menu (see contextMenuItems and Logarithmic
 // axes below).
@@ -2407,6 +2456,58 @@ const setScales = (ranges: Partial<Record<AxisKey, Range | null>>): void => {
           max: range?.[1]
         } as { min: number; max: number });
       }
+    }
+  });
+};
+
+// Update our ranges asynchronously, i.e. once our scales have been set (e.g., several times while zooming, or once per
+// frame while animating a zoom), so that we emit our current ranges (see PlotRanges) at most once per change.
+// Note: like for our margins (see updateMarginsAsync()), we use a microtask, so that other plots that share our X range
+//       get updated before the browser gets to paint us.
+
+const sameRanges = (firstRanges: PlotRanges | undefined, secondRanges: PlotRanges | undefined): boolean => {
+  return (
+    firstRanges !== undefined &&
+    secondRanges !== undefined &&
+    firstRanges.x[0] === secondRanges.x[0] &&
+    firstRanges.x[1] === secondRanges.x[1] &&
+    firstRanges.y[0] === secondRanges.y[0] &&
+    firstRanges.y[1] === secondRanges.y[1]
+  );
+};
+
+const updateRangesAsync = (): void => {
+  // Coalesce multiple range update requests into a single microtask.
+
+  if (rangesUpdatePending) {
+    return;
+  }
+
+  rangesUpdatePending = true;
+
+  queueMicrotask(() => {
+    rangesUpdatePending = false;
+
+    // Make sure that we have a plot and that it has ranges.
+
+    const xRange = currentRange('x');
+    const yRange = currentRange('y');
+
+    if (!plot || isUnmounted || !xRange || !yRange) {
+      return;
+    }
+
+    // Emit our current (actual) ranges if they have changed.
+
+    const newRanges: PlotRanges = {
+      x: [actualValue('x', xRange[0]), actualValue('x', xRange[1])],
+      y: [actualValue('y', yRange[0]), actualValue('y', yRange[1])]
+    };
+
+    if (!sameRanges(newRanges, trackedRanges)) {
+      trackedRanges = newRanges;
+
+      emit('rangesUpdated', newRanges);
     }
   });
 };
@@ -6089,6 +6190,7 @@ const createPlot = (width: number, height: number): void => {
           }
         ],
         setCursor: [queueHoverUpdate],
+        setScale: [updateRangesAsync],
         drawAxes: [drawZeroLines, drawTickLabels],
         setSize: [
           (u: uPlot) => {
@@ -6146,6 +6248,25 @@ const createPlot = (width: number, height: number): void => {
   });
 };
 
+const resetZoomIfNeeded = (): string => {
+  // Reset our zoom and forget our last autoranges (see naturalRange()) if we are plotting something else, i.e. if our
+  // axis titles have changed, and return our axis titles.
+
+  const res = `${props.data.xAxisTitle ?? ''}::${props.data.yAxisTitle ?? ''}`;
+
+  if (res !== zoomTitles) {
+    zoomTitles = res;
+    zoomRanges = {};
+
+    delete lastAutoRanges.x;
+    delete lastAutoRanges.y;
+
+    stopRangeAnimation();
+  }
+
+  return res;
+};
+
 const updatePlot = (): void => {
   // Make sure that we haven't been unmounted (e.g., if this was scheduled using vue.nextTick() just before we got
   // unmounted) and that we can be shown (e.g., we can't if we are in a hidden file tab, in which case we will be
@@ -6172,19 +6293,9 @@ const updatePlot = (): void => {
 
   isPlotOutdated = false;
 
-  // Reset our zoom and forget our last autoranges (see naturalRange()) if we are plotting something else.
+  // Reset our zoom if we are plotting something else.
 
-  const titles = `${props.data.xAxisTitle ?? ''}::${props.data.yAxisTitle ?? ''}`;
-
-  if (titles !== zoomTitles) {
-    zoomTitles = titles;
-    zoomRanges = {};
-
-    delete lastAutoRanges.x;
-    delete lastAutoRanges.y;
-
-    stopRangeAnimation();
-  }
+  const titles = resetZoomIfNeeded();
 
   // Create or update our plot.
   // Note: we only (re)create our plot if needed since it is much cheaper to update its data.

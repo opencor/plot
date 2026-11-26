@@ -13,6 +13,7 @@
           @contextMenu="(event) => onContextMenu(event, index)"
           @csvExport="onCsvExport"
           @marginsUpdated="(newMargins) => onMarginsUpdated(newMargins, index)"
+          @rangesUpdated="(newRanges) => onRangesUpdated(newRanges, index)"
         />
       </div>
     </main>
@@ -116,6 +117,10 @@
           <input v-model="sharedMargins" type="checkbox" />
           Shared margins
         </label>
+        <label class="demo-check">
+          <input v-model="sharedXRange" type="checkbox" />
+          Shared X range
+        </label>
         <label class="demo-field">
           <span>Theme</span>
           <select v-model="theme">
@@ -168,6 +173,7 @@ import OpenCORPlot, {
   type PlotData,
   type PlotMargins,
   type PlotMemoryUsage,
+  type PlotRanges,
   type PlotTheme
 } from '../index';
 import {
@@ -199,6 +205,7 @@ const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
 const layout = vue.ref<'grid' | 'stacked'>('grid'); // Whether our instances are in a grid or stacked (in one column).
 const sharedMargins = vue.ref<boolean>(true); // Whether our instances share their margins (see onMarginsUpdated()).
+const sharedXRange = vue.ref<boolean>(false); // Whether our instances share their X range (see onRangesUpdated()).
 const live = vue.ref<boolean>(false);
 const nbOfPointsPerSecond = vue.ref<number>(1000);
 const xRange = vue.ref<'fixed' | 'growing'>('fixed');
@@ -522,6 +529,34 @@ const onMarginsUpdated = (newMargins: PlotMargins, index: number): void => {
   if (margins.value?.left !== left || margins.value?.right !== right) {
     margins.value = { left, right };
   }
+};
+
+// Shared X range, i.e. the X range of the instance that was last zoomed, panned, or reset, which we give to all the
+// other instances (if they are to share their X range), so that they show the same part of their data (e.g., when they
+// are stacked).
+// Note: an instance emits its current ranges whenever they change, including when it is given some ranges (see
+//       updateRangesAsync() in PlotWidget.vue), so we ignore the X range that we last shared, or our instances would
+//       keep giving it to each other.
+
+let lastSharedXRange: [number, number] | undefined; // Shared X range of our instances.
+
+const onRangesUpdated = (newRanges: PlotRanges, index: number): void => {
+  // Give the X range of the given instance to all the other instances, if needed (i.e. only if it is a new X range).
+
+  if (
+    !sharedXRange.value ||
+    (lastSharedXRange && newRanges.x[0] === lastSharedXRange[0] && newRanges.x[1] === lastSharedXRange[1])
+  ) {
+    return;
+  }
+
+  lastSharedXRange = newRanges.x;
+
+  plotRefs.slice(0, datasets.value.length).forEach((plot: PlotInstance | null, plotIndex: number) => {
+    if (plotIndex !== index) {
+      plot?.setRanges({ x: newRanges.x });
+    }
+  });
 };
 
 // Our frame rate, and the number of points that our instances actually draw compared to their number of points (i.e.

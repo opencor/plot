@@ -74,6 +74,7 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 | `PlotData` | `{ traces, xAxisTitle?, yAxisTitle?, xAxisRange?, yAxisRange? }` | The data to plot (see [Data](#data)). |
 | `PlotTrace` | `{ name, x, y, xValue, yValue, color, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
 | `PlotMargins` | `{ left: number; right: number }` | The left and right margins (in pixels) of a plot, i.e. the space taken by its Y axis and legend (see the [`margins`](#props) prop and the [`marginsUpdated`](#events) event). |
+| `PlotRanges` | `{ x: [number, number]; y: [number, number] }` | The current ranges of the axes of a plot (even if an axis is logarithmic, see the [`rangesUpdated`](#events) event and the [`setRanges()`](#methods) method). |
 | `PlotTheme` | `'system' \| 'light' \| 'dark'` | The value of the [`theme`](#props) prop. |
 | `PlotCsvExportEvent` | `PlotCsvExportStartedEvent \| PlotCsvExportProgressEvent \| PlotCsvExportFinishedEvent` | The payload of the [`csvExport`](#events) event. Use its `type` to tell which one it is. |
 | `PlotCsvExportStartedEvent` | `{ type: 'started' }` | An export to CSV has started. |
@@ -96,7 +97,7 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 |---|---|---|
 | `traces` | [`PlotTrace`](#types)`[]` | The traces to plot. |
 | `xAxisTitle`, `yAxisTitle` | `string` | The axis titles. |
-| `xAxisRange`, `yAxisRange` | `[number, number]` | The range of an axis when the zoom is reset. By default, it fits the data. |
+| `xAxisRange`, `yAxisRange` | `[number, number]` | The range of an axis when the zoom is reset. By default, it fits the data. The current ranges can be followed using the [`rangesUpdated`](#events) event and set using the [`setRanges()`](#methods) method. |
 
 [`PlotTrace`](#types):
 
@@ -114,6 +115,7 @@ Notes:
 - Titles and trace names can contain a little HTML (`b`, `br`, `code`, `em`, `i`, `strong`, `sub`, and `sup`). Anything else is removed.
 - A trace can be a function of X (e.g., against time) or not (e.g., a phase plot). A point with a non-finite X or Y value (e.g., `NaN`) is a gap in its trace.
 - A trace with fewer than 20 points is also drawn with markers.
+- The zoom is kept when the data is updated, unless the axis titles change (i.e. something else is being plotted).
 
 ### Large and live data
 
@@ -157,6 +159,7 @@ To draw traces without our level of detail, use `:levelOfDetail="false"`. Our pa
 | Event | Payload | Description |
 |---|---|---|
 | `marginsUpdated` | [`PlotMargins`](#types) | The margins that the plot needs have changed. To line up several plots, pass the largest left and right margins of all of them to each plot's [`margins`](#props) prop. |
+| `rangesUpdated` | [`PlotRanges`](#types) | The current ranges of the axes have changed (e.g., after zooming, panning, or resetting the zoom, or after the data has been updated while an axis is autoranged). To link the X axes of several plots, pass the `x` range of one of them to the [`setRanges()`](#methods) method of the others. |
 | `csvExport` | [`PlotCsvExportEvent`](#types) | An export to CSV has `'started'`, made `'progress'` (with a `percent`), or `'finished'` (with whether it was a `success`), so that its progress can be shown. |
 | `imageExport` | [`PlotImageExportEvent`](#types) | The plot has been copied to the clipboard or exported to an image (or has failed to be), so that the user can be told about it. |
 | `contextMenu` | [`PlotContextMenuEvent`](#types) | Only with [`customContextMenu`](#props): the context menu was requested at `clientX`/`clientY`, with the `items` that our context menu would have shown. If `usingKeyboard` is true, the custom menu should take the keyboard focus. |
@@ -168,6 +171,7 @@ Available through a template ref:
 | Method | Description |
 |---|---|
 | `resetMargins()` | Emit [`marginsUpdated`](#events) again, e.g. after the shared margins have been reset. |
+| `setRanges(ranges)` | Zoom into the given [`PlotRanges`](#types) (e.g., `{ x: [0, 10] }`), leaving the axes without a range as they are. Like a zoom by the user, they are kept when the data is updated. They are ignored if any of them is not valid (e.g., if its minimum is not smaller than its maximum or, for a logarithmic axis, if it is not positive). |
 | `contextMenuHidden()` | Tell the plot that a custom context menu (see [`contextMenu`](#events)) has been hidden, so that it can get the keyboard focus back. |
 | `pointCounts()` | The number of points of the visible traces (`nbOfPoints`), and how many of them were last drawn (`nbOfDrawnPoints`), as a [`PlotPointCounts`](#types). Meant for testing and benchmarking. |
 | `memoryUsage()` | The memory (in bytes) used by the component itself, not counting the data, as a [`PlotMemoryUsage`](#types): by its levels of detail (`levelOfDetail`) and by the logarithm of its values along logarithmic axes (`logValues`). Meant for testing and benchmarking. |

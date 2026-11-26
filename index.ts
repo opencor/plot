@@ -19,6 +19,7 @@ export type {
   PlotMargins,
   PlotMemoryUsage,
   PlotPointCounts,
+  PlotRanges,
   PlotTrace
 } from './src/widgets/PlotWidget.vue';
 export { default, default as OpenCORPlot } from './src/widgets/PlotWidget.vue';
