@@ -1,7 +1,7 @@
 <template>
   <div class="demo">
     <main class="demo-main" :style="gridStyle">
-      <div v-for="(data, index) in datasets" :key="index" class="demo-plot">
+      <div v-for="(data, index) in styledDatasets" :key="index" class="demo-plot">
         <OpenCORPlot :ref="(plot) => setPlotRef(plot, index)"
           :data="data"
           :theme="instanceTheme(index)"
@@ -125,6 +125,18 @@
             <option value="mixed">Mixed</option>
           </select>
         </label>
+        <label class="demo-field">
+          <span>Line style</span>
+          <select v-model="lineStyle">
+            <option v-for="(name, value) in LINE_STYLES" :key="value" :value="value">{{ name }}</option>
+          </select>
+        </label>
+        <label class="demo-field">
+          <span>Line width</span>
+          <select v-model.number="lineWidth">
+            <option v-for="value in LINE_WIDTHS" :key="value" :value="value">{{ formatNumber(value) }}</option>
+          </select>
+        </label>
         <label class="demo-check">
           <input v-model="levelOfDetail" type="checkbox" />
           Level of detail
@@ -166,6 +178,7 @@ import OpenCORPlot, {
   type PlotContextMenuEvent,
   type PlotCsvExportEvent,
   type PlotData,
+  type PlotLineStyle,
   type PlotMargins,
   type PlotMemoryUsage,
   type PlotTheme
@@ -188,12 +201,23 @@ const NBS_OF_TRACES = [1, 3, 10, 30, 100];
 const NBS_OF_POINTS = [10, 100, 1000, 10000, 100000, 1000000, 10000000];
 const NBS_OF_INSTANCES = [1, 2, 4, 9, 16, 25, 36, 49];
 const NBS_OF_POINTS_PER_SECOND = [10, 100, 1000, 10000, 100000, 1000000];
+const LINE_STYLES: Record<PlotLineStyle | 'mixed', string> = {
+  solid: 'Solid',
+  dash: 'Dash',
+  dot: 'Dot',
+  dashDot: 'Dash dot',
+  dashDotDot: 'Dash dot dot',
+  mixed: 'Mixed'
+};
+const LINE_WIDTHS = [1, 2, 4, 8];
 
 const kind = vue.ref<DataKind>('smooth');
 const nbOfTraces = vue.ref<number>(3);
 const nbOfPoints = vue.ref<number>(1000);
 const nbOfInstances = vue.ref<number>(1);
 const theme = vue.ref<PlotTheme | 'mixed'>('mixed');
+const lineStyle = vue.ref<PlotLineStyle | 'mixed'>('solid');
+const lineWidth = vue.ref<number>(2);
 const levelOfDetail = vue.ref<boolean>(true);
 const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
@@ -470,6 +494,23 @@ vue.watch([live, nbOfPointsPerSecond, xRange], () => {
   if (generatedDatasets.length) {
     showData();
   }
+});
+
+// Our data, with the line style and line width of our traces, which, if our line style is mixed, go through all our
+// line styles (i.e. solid, dash, dot, etc.), so that they can be compared.
+// Note: our traces keep their X and Y values, so changing their line style or line width doesn't copy our data.
+
+const MIXED_LINE_STYLES = Object.keys(LINE_STYLES).filter((value) => value !== 'mixed') as PlotLineStyle[];
+
+const styledDatasets = vue.computed<PlotData[]>(() => {
+  return datasets.value.map((data) => ({
+    ...data,
+    traces: data.traces.map((trace, index) => ({
+      ...trace,
+      lineStyle: lineStyle.value === 'mixed' ? MIXED_LINE_STYLES[index % MIXED_LINE_STYLES.length] : lineStyle.value,
+      lineWidth: lineWidth.value
+    }))
+  }));
 });
 
 // Our instances, laid out in a grid that is as square as possible.

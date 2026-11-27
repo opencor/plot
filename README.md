@@ -72,7 +72,8 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 | Type | Definition | Description |
 |---|---|---|
 | `PlotData` | `{ traces, xAxisTitle?, yAxisTitle?, xAxisRange?, yAxisRange? }` | The data to plot (see [Data](#data)). |
-| `PlotTrace` | `{ name, x, y, xValue, yValue, color, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
+| `PlotTrace` | `{ name, x, y, xValue, yValue, color, lineStyle?, lineWidth?, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
+| `PlotLineStyle` | `'solid' \| 'dash' \| 'dot' \| 'dashDot' \| 'dashDotDot'` | The style of the line of a trace, i.e. one of the line types of SED-ML's `Line` (except `none`). |
 | `PlotMargins` | `{ left: number; right: number }` | The left and right margins (in pixels) of a plot, i.e. the space taken by its Y axis and legend (see the [`margins`](#props) prop and the [`marginsUpdated`](#events) event). |
 | `PlotTheme` | `'system' \| 'light' \| 'dark'` | The value of the [`theme`](#props) prop. |
 | `PlotCsvExportEvent` | `PlotCsvExportStartedEvent \| PlotCsvExportProgressEvent \| PlotCsvExportFinishedEvent` | The payload of the [`csvExport`](#events) event. Use its `type` to tell which one it is. |
@@ -106,6 +107,8 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 | `x`, `y` | `Float64Array` | The X and Y values of the trace. |
 | `xValue`, `yValue` | `string` | What the X and Y values are (e.g., the name of a model variable), used in the CSV export. |
 | `color` | `string` | The colour of the trace. |
+| `lineStyle` | [`PlotLineStyle`](#types) | The optional style of the line of the trace (`'solid'` by default). Like Plotly, its dashes and gaps scale with the width of the line, so that a thick line looks right. |
+| `lineWidth` | `number` | The optional width of the line of the trace (in pixels, 2 by default). |
 | `traceId` | `string` | An optional identifier that keeps the visibility of the trace when the data is updated. Otherwise, the trace is identified by its `name`, `xValue`, `yValue`, and `runLabel` (and, among traces that have the same ones, by their order), or by its position if it doesn't have a `name`, `xValue`, and `yValue`. |
 | `legendRank` | `number` | The optional rank of the trace in the legend (lower ranks first, 1000 by default). |
 | `runLabel` | `string` | An optional label that tells apart the X column of the trace from those of other runs in the CSV export. |

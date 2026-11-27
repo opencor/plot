@@ -128,7 +128,12 @@
           @focus="onLegendFocus($event, legendItem.index)"
           @blur="highlightTrace(null)"
         >
-          <span class="legend-swatch" :style="{ backgroundColor: legendItem.visible ? legendItem.color : themeColors.hiddenTrace }">
+          <span class="legend-swatch" :class="{ 'legend-swatch-dashed': legendItem.dash.length }"
+            :style="{
+              color: legendItem.visible ? legendItem.color : themeColors.hiddenTrace,
+              backgroundImage: dashGradient(legendItem.dash) || undefined
+            }"
+          >
             <span v-if="legendItem.markers" class="legend-marker" />
           </span>
           <span v-html="common.sanitiseHtml(legendItem.name)" />
@@ -165,6 +170,7 @@ import 'uplot/dist/uPlot.min.css';
 import { createChunkedPath, MAX_PATH_POINTS } from '../common/chunkedPathUtils';
 import * as common from '../common/common';
 import * as levelOfDetailUtils from '../common/levelOfDetailUtils';
+import { dashGradient, dotLength, type LineStyle, lineDash, validLineWidth } from '../common/lineStyleUtils';
 import * as pathLevelOfDetailUtils from '../common/pathLevelOfDetailUtils';
 import { isValidRange, pinchedRange, type Range, scaledRange } from '../common/rangeUtils';
 import { SimplifiedPath, TraceSmoothness } from '../common/simplifiedPathUtils';
@@ -216,11 +222,22 @@ export interface PlotTrace {
   y: Float64Array;
   /** The colour of the trace, as a CSS colour (e.g., `'#1f77b4'`). */
   color: string;
+  /** The optional style of the line of the trace (see `PlotLineStyle`, `'solid'` by default). */
+  lineStyle?: PlotLineStyle;
+  /** The optional width of the line of the trace (in CSS pixels, 2 by default). */
+  lineWidth?: number;
   /** The optional rank of the trace in the legend (lower ranks first, 1000 by default). */
   legendRank?: number;
   /** An optional label that tells apart the X column of the trace from those of other runs in the CSV export. */
   runLabel?: string;
 }
+
+/**
+ * The style of the line of a trace, i.e. one of the line types of SED-ML's `Line` (except `none`). Its dashes and gaps
+ * scale with the width of the line, so that a thick line looks right.
+ */
+
+export type PlotLineStyle = LineStyle;
 
 /**
  * The data to plot. It is not watched, so to update it, give the plot a new `PlotData` object (see
@@ -426,6 +443,7 @@ const LEGEND_RIGHT_MARGIN = 8; // Margin between our legend (or last X tick labe
 const LEGEND_MAX_WIDTH_RATIO = 0.4; // Maximum width of our legend, relative to the width of our container.
 const LEGEND_MIN_WIDTH = 96; // Minimum width of our legend (i.e. about 8 characters), or we hide it.
 const DEFAULT_LEGEND_RANK = 1000; // Like Plotly's default legend rank.
+const LEGEND_DOT_LENGTH = 2; // Length of a dot in our legend swatches, so that all our line styles can be told apart.
 const X_TICK_LABEL_BASELINE = TICK_FONT_SIZE + 1; // Like Plotly, the distance to the baseline of our X tick labels.
 const Y_TICK_LABEL_GAP = 1; // Like Plotly, the gap between our plotting area and our Y tick labels.
 const Y_TICK_LABEL_BASELINE = 0.35 * TICK_FONT_SIZE; // Like Plotly, the distance from a tick to its label's baseline.
@@ -899,6 +917,7 @@ interface LegendItem {
   name: string;
   visible: boolean;
   markers: boolean;
+  dash: number[];
   legendRank: number;
 }
 
@@ -912,6 +931,7 @@ const legendItems = vue.computed<LegendItem[]>(() => {
       name: trace.name,
       visible: visibilities[index] ?? true,
       markers: hasMarkers(trace.x, trace.y),
+      dash: lineDash(trace.lineStyle, LEGEND_DOT_LENGTH),
       legendRank: trace.legendRank ?? DEFAULT_LEGEND_RANK
     }))
     .sort((item1: LegendItem, item2: LegendItem) => item1.legendRank - item2.legendRank || item1.index - item2.index);
@@ -1647,10 +1667,23 @@ const svgLegend = (origin: DOMRect, scale: number, colors: ExportColors): string
     if (swatch && swatchStyle) {
       const swatchLeft = snap(swatch.left - origin.left);
       const swatchTop = snap(swatch.top - origin.top);
+      const swatchWidth = snap(swatch.right - origin.left) - swatchLeft;
+      const swatchHeight = snap(swatch.bottom - origin.top) - swatchTop;
 
-      res.push(
-        `<rect x="${svgNumber(swatchLeft)}" y="${svgNumber(swatchTop)}" width="${svgNumber(snap(swatch.right - origin.left) - swatchLeft)}" height="${svgNumber(snap(swatch.bottom - origin.top) - swatchTop)}" rx="${svgNumber(Number.parseFloat(swatchStyle.borderRadius) || 0)}" fill="${escapeXml(swatchColor)}"/>`
-      );
+      // Note: a dashed swatch is drawn as a line with the dash pattern of our legend item, which is what its gradient
+      //       draws (see our template).
+
+      if (legendItem.dash.length) {
+        const swatchMiddle = swatchTop + 0.5 * swatchHeight;
+
+        res.push(
+          `<line x1="${svgNumber(swatchLeft)}" y1="${svgNumber(swatchMiddle)}" x2="${svgNumber(swatchLeft + swatchWidth)}" y2="${svgNumber(swatchMiddle)}" stroke="${escapeXml(swatchColor)}" stroke-width="${svgNumber(swatchHeight)}" stroke-dasharray="${legendItem.dash.map(svgNumber).join(' ')}"/>`
+        );
+      } else {
+        res.push(
+          `<rect x="${svgNumber(swatchLeft)}" y="${svgNumber(swatchTop)}" width="${svgNumber(swatchWidth)}" height="${svgNumber(swatchHeight)}" rx="${svgNumber(Number.parseFloat(swatchStyle.borderRadius) || 0)}" fill="${escapeXml(swatchColor)}"/>`
+        );
+      }
     }
 
     // Add the marker of our legend item, if it has one.
@@ -1755,11 +1788,9 @@ const svgDocument = (scale: number = 1): SvgDocument => {
   const origin = mainDiv.getBoundingClientRect();
   const scaledWidth = Math.round(scale * mainDiv.clientWidth);
   const scaledHeight = Math.round(scale * mainDiv.clientHeight);
-  const traceLineWidth = LINE_WIDTH * scale;
   const colors = exportColors();
   const res: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${scaledWidth}" height="${scaledHeight}" viewBox="0 0 ${scaledWidth} ${scaledHeight}">`,
-    `<clipPath id="traces"><rect x="${svgNumber(left - 0.5 * traceLineWidth)}" y="${svgNumber(top - 0.5 * traceLineWidth)}" width="${svgNumber(width + traceLineWidth)}" height="${svgNumber(height + traceLineWidth)}"/></clipPath>`,
     `<clipPath id="markers"><rect x="${svgNumber(left)}" y="${svgNumber(top)}" width="${svgNumber(width)}" height="${svgNumber(height)}"/></clipPath>`,
     `<rect width="${scaledWidth}" height="${scaledHeight}" fill="${escapeXml(colors.background)}"/>`
   ];
@@ -1783,6 +1814,29 @@ const svgDocument = (scale: number = 1): SvgDocument => {
   res.push(lines(colors.grid, xSplits, ySplits, false), lines(colors.zeroLine, zeroLines('x'), zeroLines('y')));
 
   // Our visible traces and their markers, if any, which uPlot draws in that order, trace by trace.
+  // Note: like uPlot, we clip a trace to our plotting area, give or take half its line width, so we have a clip path
+  //       for each line width of our traces.
+
+  const traceClipPaths = new Map<number, string>();
+
+  const traceClipPath = (traceLineWidth: number): string => {
+    // Return the identifier of the clip path of a trace with the given line width (in scaled pixels), after adding that
+    // clip path to our document, if needed.
+
+    let id = traceClipPaths.get(traceLineWidth);
+
+    if (id === undefined) {
+      id = `traces-${traceClipPaths.size + 1}`;
+
+      traceClipPaths.set(traceLineWidth, id);
+
+      res.push(
+        `<clipPath id="${id}"><rect x="${svgNumber(left - 0.5 * traceLineWidth)}" y="${svgNumber(top - 0.5 * traceLineWidth)}" width="${svgNumber(width + traceLineWidth)}" height="${svgNumber(height + traceLineWidth)}"/></clipPath>`
+      );
+    }
+
+    return id;
+  };
 
   for (let seriesIndex = 1; seriesIndex < u.series.length; ++seriesIndex) {
     const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
@@ -1793,14 +1847,27 @@ const svgDocument = (scale: number = 1): SvgDocument => {
     }
 
     const tracePath = createChunkedPath(svgPath);
-    const traceAttributes = `stroke="${escapeXml(color)}" stroke-width="${svgNumber(traceLineWidth)}" stroke-linejoin="round" fill="none" clip-path="url(#traces)"`;
+    const traceLineWidth = seriesLineWidth(seriesIndex) * scale;
+    const traceLineDash = seriesLineDash(seriesIndex).map((length: number) => svgNumber(length * scale));
+    const traceAttributes =
+      `stroke="${escapeXml(color)}" stroke-width="${svgNumber(traceLineWidth)}"` +
+      (traceLineDash.length ? ` stroke-dasharray="${traceLineDash.join(' ')}"` : '') +
+      ` stroke-linejoin="round" fill="none" clip-path="url(#${traceClipPath(traceLineWidth)})"`;
 
     // Note: we don't simplify our trace, so that it is exactly what we would draw without our level of detail, but we
     //       still use a SimplifiedPath (see Note #4 of simplifiedPathUtils.ts).
 
     const simplifiedPath = new SimplifiedPath(tracePath, 0);
 
-    linearPath(simplifiedPath, xValues, yValues, 0, Math.min(xValues.length, yValues.length) - 1, area);
+    linearPath(
+      simplifiedPath,
+      xValues,
+      yValues,
+      0,
+      Math.min(xValues.length, yValues.length) - 1,
+      area,
+      seriesLineWidth(seriesIndex)
+    );
 
     simplifiedPath.end();
 
@@ -2161,6 +2228,20 @@ const seriesColor = (seriesIndex: number): string => {
   // Return the colour of the given series, i.e. that of its trace.
 
   return props.data.traces[seriesIndex - 1]?.color ?? 'transparent';
+};
+
+const seriesLineWidth = (seriesIndex: number): number => {
+  // Return the line width (in CSS pixels) of the given series, i.e. that of its trace, if it is valid, or our default
+  // line width otherwise.
+
+  return validLineWidth(props.data.traces[seriesIndex - 1]?.lineWidth, LINE_WIDTH);
+};
+
+const seriesLineDash = (seriesIndex: number): number[] => {
+  // Return the dash pattern (in CSS pixels) of the given series, i.e. that of the line style of its trace, scaled with
+  // its line width.
+
+  return lineDash(props.data.traces[seriesIndex - 1]?.lineStyle, dotLength(seriesLineWidth(seriesIndex)));
 };
 
 const hasMarkers = (xValues?: Float64Array, yValues?: Float64Array): boolean => {
@@ -4584,7 +4665,8 @@ const linearPath = (
   yValues: Float64Array,
   index0: number,
   index1: number,
-  area: PathArea
+  area: PathArea,
+  lineWidth: number // In CSS pixels.
 ): void => {
   // uPlot doesn't support unsorted X values (e.g., phase plots) and draws each (canvas) pixel column of a dense trace
   // as a vertical line, which makes the steep parts of a trace look jagged. So, we use our own linear path builder
@@ -4597,16 +4679,16 @@ const linearPath = (
   // Note #2: we only ever look at consecutive points, so this works whether or not our X values are sorted.
   // Note #3: we break our path at non-finite values, so that a gap in the data is drawn as a gap in the trace.
   // Note #4: we skip any segment that is entirely outside our plotting area (e.g., when we are zoomed in), i.e. which
-  //          two points are beyond the same edge of our plotting area (by more than our line width since our traces are
-  //          drawn with round joins and clipped to our plotting area, give or take half our line width, by uPlot and in
-  //          our exports). This means that we only draw the part of our trace that can be seen.
+  //          two points are beyond the same edge of our plotting area (by more than the given line width since our
+  //          traces are drawn with round joins and clipped to our plotting area, give or take half their line width, by
+  //          uPlot and in our exports). This means that we only draw the part of our trace that can be seen.
 
   const { left, top, width, height, xMin, xMax, yMin, yMax } = area;
   const xFactor = width / (xMax - xMin);
   const yFactor = height / (yMax - yMin);
   const bottom = top + height;
   const right = left + width;
-  const margin = LINE_WIDTH * area.pxRatio;
+  const margin = lineWidth * area.pxRatio;
 
   // The edges beyond which a point is outside our plotting area (see Note #4 above).
 
@@ -5127,10 +5209,10 @@ const linearPathPoints = (
   }
 
   // Only go through our visible points, if our X values are sorted.
-  // Note: linearPath() draws the points that are within its margin (i.e. our line width) of our plotting area, since
-  //       part of what they draw can be seen, so we must go through them too.
+  // Note: linearPath() draws the points that are within its margin (i.e. the line width of our trace) of our plotting
+  //       area, since part of what they draw can be seen, so we must go through them too.
 
-  const margin = LINE_WIDTH * area.pxRatio;
+  const margin = seriesLineWidth(seriesIndex) * area.pxRatio;
   const xMargin = margin / xFactor;
   const [start, end] = levelOfDetailUtils.visibleRange(
     lod,
@@ -5293,7 +5375,15 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
       SMOOTH_TRACE_RATIO * nbOfDrawnPoints
     );
 
-    linearPath(simplifiedPath, points.xValues, points.yValues, points.index0, points.index1, area);
+    linearPath(
+      simplifiedPath,
+      points.xValues,
+      points.yValues,
+      points.index0,
+      points.index1,
+      area,
+      seriesLineWidth(seriesIndex)
+    );
 
     simplifiedPath.end();
 
@@ -5306,6 +5396,18 @@ const linearPaths: uPlot.Series.PathBuilder = (u: uPlot, seriesIndex: number, in
   }
 
   drawnPoints[seriesIndex - 1] = nbOfDrawnPoints;
+
+  // Use the line width and dash pattern of our trace, which may have changed since our plot was created (e.g., if we
+  // were given new data with the same number of traces, see updatePlot()).
+  // Note: uPlot strokes our path or paths using the line width and dash pattern of our series, once we have built them.
+  //       It scales our line width by our pixel ratio, but uses our dash pattern as is, hence we scale it ourselves.
+
+  const plotSeries = u.series[seriesIndex];
+
+  if (plotSeries) {
+    plotSeries.width = seriesLineWidth(seriesIndex);
+    plotSeries.dash = seriesLineDash(seriesIndex).map((length: number) => length * uPlot.pxRatio);
+  }
 
   // Stroke our path or paths.
 
@@ -5955,7 +6057,7 @@ const createPlot = (width: number, height: number): void => {
       show: traceVisibilities.value[i] ?? true,
       alpha: seriesAlpha(i),
       stroke: (_plot: uPlot, seriesIndex: number) => seriesColor(seriesIndex),
-      width: LINE_WIDTH,
+      width: seriesLineWidth(i + 1), // Note: our line width and dash pattern get updated in linearPaths().
       // Note: uPlot shifts the path of a trace by up to half a canvas pixel if its line width is not an even number of
       //       canvas pixels (e.g., by half a canvas pixel with a device pixel ratio of 1.5), since its own path
       //       builders round the position of points to whole canvas pixels. Our path builders don't (and neither do our
@@ -6629,7 +6731,7 @@ vue.watch(
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background-color: inherit;
+    background-color: currentcolor;
   }
 
   .legend-swatch {
@@ -6639,6 +6741,17 @@ vue.watch(
     width: 18px;
     height: 3px;
     border-radius: 1.5px;
+    background-color: currentcolor;
+  }
+
+  /**
+   * Note: a dashed swatch draws its dash pattern using a gradient (see our template), with square ends, like the dashes
+   *       of a trace.
+   */
+
+  .legend-swatch-dashed {
+    border-radius: 0;
+    background-color: transparent;
   }
 
   /**

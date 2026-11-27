@@ -16,6 +16,7 @@ export type {
   PlotCsvExportStartedEvent,
   PlotData,
   PlotImageExportEvent,
+  PlotLineStyle,
   PlotMargins,
   PlotMemoryUsage,
   PlotPointCounts,
