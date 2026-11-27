@@ -74,6 +74,7 @@ The component is the default export of `@opencor/plot`, and is also exported as 
 | `PlotData` | `{ traces, xAxisTitle?, yAxisTitle?, xAxisRange?, yAxisRange? }` | The data to plot (see [Data](#data)). |
 | `PlotTrace` | `{ name, x, y, xValue, yValue, color, traceId?, legendRank?, runLabel? }` | A trace to plot (see [Data](#data)). |
 | `PlotMargins` | `{ left: number; right: number }` | The left and right margins (in pixels) of a plot, i.e. the space taken by its Y axis and legend (see the [`margins`](#props) prop and the [`marginsUpdated`](#events) event). |
+| `PlotHoverEvent` | `{ x: number \| null }` | The payload of the [`hovered`](#events) event: the X value that the mouse pointer hovers, or `null` if the hover has ended (see the [`hoverAt()`](#methods) method). |
 | `PlotTheme` | `'system' \| 'light' \| 'dark'` | The value of the [`theme`](#props) prop. |
 | `PlotCsvExportEvent` | `PlotCsvExportStartedEvent \| PlotCsvExportProgressEvent \| PlotCsvExportFinishedEvent` | The payload of the [`csvExport`](#events) event. Use its `type` to tell which one it is. |
 | `PlotCsvExportStartedEvent` | `{ type: 'started' }` | An export to CSV has started. |
@@ -157,6 +158,7 @@ To draw traces without our level of detail, use `:levelOfDetail="false"`. Our pa
 | Event | Payload | Description |
 |---|---|---|
 | `marginsUpdated` | [`PlotMargins`](#types) | The margins that the plot needs have changed. To line up several plots, pass the largest left and right margins of all of them to each plot's [`margins`](#props) prop. |
+| `hovered` | [`PlotHoverEvent`](#types) | The X value that the mouse pointer hovers (i.e. the X value of the hovered point that is the closest to it) has changed, or the hover has ended (`null`). To link the hover of several plots, pass it to the [`hoverAt()`](#methods) method of the other plots. |
 | `csvExport` | [`PlotCsvExportEvent`](#types) | An export to CSV has `'started'`, made `'progress'` (with a `percent`), or `'finished'` (with whether it was a `success`), so that its progress can be shown. |
 | `imageExport` | [`PlotImageExportEvent`](#types) | The plot has been copied to the clipboard or exported to an image (or has failed to be), so that the user can be told about it. |
 | `contextMenu` | [`PlotContextMenuEvent`](#types) | Only with [`customContextMenu`](#props): the context menu was requested at `clientX`/`clientY`, with the `items` that our context menu would have shown. If `usingKeyboard` is true, the custom menu should take the keyboard focus. |
@@ -168,6 +170,7 @@ Available through a template ref:
 | Method | Description |
 |---|---|
 | `resetMargins()` | Emit [`marginsUpdated`](#events) again, e.g. after the shared margins have been reset. |
+| `hoverAt(x)` | Show the guide line and hovered points at X value `x` (e.g., the one that another plot gave through its [`hovered`](#events) event), or stop showing them if `x` is `null`. Only the traces whose X values are sorted (i.e. not phase plots) get a hovered point, there is no hover tooltip, and the mouse pointer takes precedence. It doesn't emit [`hovered`](#events), so linked plots don't keep hovering each other. |
 | `contextMenuHidden()` | Tell the plot that a custom context menu (see [`contextMenu`](#events)) has been hidden, so that it can get the keyboard focus back. |
 | `pointCounts()` | The number of points of the visible traces (`nbOfPoints`), and how many of them were last drawn (`nbOfDrawnPoints`), as a [`PlotPointCounts`](#types). Meant for testing and benchmarking. |
 | `memoryUsage()` | The memory (in bytes) used by the component itself, not counting the data, as a [`PlotMemoryUsage`](#types): by its levels of detail (`levelOfDetail`) and by the logarithm of its values along logarithmic axes (`logValues`). Meant for testing and benchmarking. |

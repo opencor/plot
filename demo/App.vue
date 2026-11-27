@@ -12,6 +12,7 @@
           :margins="sharedMargins ? margins : undefined"
           @contextMenu="(event) => onContextMenu(event, index)"
           @csvExport="onCsvExport"
+          @hovered="(event) => onHovered(event, index)"
           @marginsUpdated="(newMargins) => onMarginsUpdated(newMargins, index)"
         />
       </div>
@@ -116,6 +117,10 @@
           <input v-model="sharedMargins" type="checkbox" />
           Shared margins
         </label>
+        <label class="demo-check">
+          <input v-model="linkedHover" type="checkbox" />
+          Link hover
+        </label>
         <label class="demo-field">
           <span>Theme</span>
           <select v-model="theme">
@@ -166,6 +171,7 @@ import OpenCORPlot, {
   type PlotContextMenuEvent,
   type PlotCsvExportEvent,
   type PlotData,
+  type PlotHoverEvent,
   type PlotMargins,
   type PlotMemoryUsage,
   type PlotTheme
@@ -199,6 +205,7 @@ const showLegend = vue.ref<boolean>(true);
 const customContextMenu = vue.ref<boolean>(false);
 const layout = vue.ref<'grid' | 'stacked'>('grid'); // Whether our instances are in a grid or stacked (in one column).
 const sharedMargins = vue.ref<boolean>(true); // Whether our instances share their margins (see onMarginsUpdated()).
+const linkedHover = vue.ref<boolean>(true); // Whether our instances have their hover linked (see onHovered()).
 const live = vue.ref<boolean>(false);
 const nbOfPointsPerSecond = vue.ref<number>(1000);
 const xRange = vue.ref<'fixed' | 'growing'>('fixed');
@@ -523,6 +530,35 @@ const onMarginsUpdated = (newMargins: PlotMargins, index: number): void => {
     margins.value = { left, right };
   }
 };
+
+// Linked hover, i.e. hovering an instance shows the guide line and hovered points of our other instances at the same X
+// value.
+// Note: an instance doesn't emit the X value at which it is hovered through hoverAt() (see PlotWidget.vue), so our
+//       instances don't keep hovering each other.
+
+const onHovered = (event: PlotHoverEvent, index: number): void => {
+  // Hover our other instances at the X value that the given instance hovers, if our hover is to be linked.
+
+  if (!linkedHover.value) {
+    return;
+  }
+
+  for (let plotIndex = 0; plotIndex < datasets.value.length; ++plotIndex) {
+    if (plotIndex !== index) {
+      plotRefs[plotIndex]?.hoverAt(event.x);
+    }
+  }
+};
+
+// Stop hovering our instances at an X value when our hover is not to be linked anymore.
+
+vue.watch(linkedHover, (newLinkedHover: boolean) => {
+  if (!newLinkedHover) {
+    for (const plot of plotRefs) {
+      plot?.hoverAt(null);
+    }
+  }
+});
 
 // Our frame rate, and the number of points that our instances actually draw compared to their number of points (i.e.
 // without level of detail), which we update twice a second (rather than reactively, which would be costly with many

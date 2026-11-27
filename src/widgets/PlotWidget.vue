@@ -136,18 +136,18 @@
       </div>
     </div>
     <ContextMenuWidget v-if="!customContextMenu" ref="contextMenuRef" :items="contextMenuItems" :appendTo="appendTo" :darkMode="isDarkMode" :themeStyle="overlayThemeStyle" @hide="onContextMenuHide" />
-    <Teleport v-if="hover" :to="appendTo ?? 'body'">
+    <Teleport v-if="hover?.tooltip" :to="appendTo ?? 'body'">
       <div ref="hoverTooltipRef" class="opencor-plot-theme hover-tooltip" :class="{ 'opencor-plot-dark-mode': isDarkMode }" :style="overlayThemeStyle">
         <div class="hover-tooltip-header">
           <span v-if="data.xAxisTitle" class="hover-tooltip-name" v-html="common.sanitiseHtml(data.xAxisTitle)" />
-          <span class="hover-tooltip-value">{{ hover.x }}</span>
+          <span class="hover-tooltip-value">{{ hover.tooltip.x }}</span>
         </div>
-        <div v-for="row in hover.rows" :key="row.seriesIndex" class="hover-tooltip-row">
+        <div v-for="row in hover.tooltip.rows" :key="row.seriesIndex" class="hover-tooltip-row">
           <span class="hover-tooltip-swatch" :style="{ backgroundColor: row.color }" />
           <span class="hover-tooltip-name" v-html="common.sanitiseHtml(row.name)" />
           <span class="hover-tooltip-value">{{ row.value }}</span>
         </div>
-        <div v-if="hover.otherRows" class="hover-tooltip-other-rows">+{{ hover.otherRows }} more</div>
+        <div v-if="hover.tooltip.otherRows" class="hover-tooltip-other-rows">+{{ hover.tooltip.otherRows }} more</div>
       </div>
     </Teleport>
     <Teleport v-if="dragCursor" :to="appendTo ?? 'body'">
@@ -250,6 +250,19 @@ export interface PlotMargins {
   left: number;
   /** The right margin (in pixels), i.e. the space taken by the legend. */
   right: number;
+}
+
+/**
+ * The payload of the `hovered` event, which is emitted whenever the X value that the mouse pointer hovers changes. To
+ * link the hover of several plots, pass the X value that a plot gives to the `hoverAt()` method of the other plots.
+ */
+
+export interface PlotHoverEvent {
+  /**
+   * The hovered X value, i.e. the X value of the hovered point that is the closest to the mouse pointer, or `null` if
+   * the hover has ended.
+   */
+  x: number | null;
 }
 
 /** The payload of the `csvExport` event when an export to CSV has started. */
@@ -402,6 +415,11 @@ const emit = defineEmits<{
   /** An export to CSV has started, made some progress, or finished, so that its progress can be shown. */
   csvExport: [event: PlotCsvExportEvent];
   /**
+   * The X value that the mouse pointer hovers has changed (see `PlotHoverEvent`). To link the hover of several plots,
+   * pass it to the `hoverAt()` method of the other plots.
+   */
+  hovered: [event: PlotHoverEvent];
+  /**
    * The plot has been copied to the clipboard or exported to an image (or has failed to be), so that the user can be
    * told about it (see `PlotImageExportEvent`).
    */
@@ -508,6 +526,15 @@ const resetMargins = (): void => {
   updateMarginsAsync();
 };
 
+const hoverAt = (x: number | null): void => {
+  // Keep track of the X value at which we are to be hovered, if any, and update our hover accordingly (see
+  // updateHover()).
+
+  hoveredAtX = x;
+
+  queueHoverUpdate();
+};
+
 const contextMenuHidden = (): void => {
   // Our custom context menu has been hidden (see PlotContextMenuEvent), so do as if it was our context menu.
 
@@ -591,6 +618,12 @@ interface PlotMethods {
    */
   contextMenuHidden: () => void;
   /**
+   * Show the guide line and hovered points at the given X value (e.g., the one that another plot gave through its
+   * `hovered` event), or stop showing them if it is `null`. Only the traces whose X values are sorted get a hovered
+   * point, there is no hover tooltip, and the mouse pointer takes precedence. The `hovered` event doesn't get emitted.
+   */
+  hoverAt: (x: number | null) => void;
+  /**
    * Return the memory (in bytes) used by the plot itself, not counting its data. It is not reactive, i.e. it is meant
    * to be polled. Mainly meant for testing and benchmarking.
    */
@@ -606,6 +639,7 @@ interface PlotMethods {
 
 defineExpose<PlotMethods>({
   contextMenuHidden,
+  hoverAt,
   memoryUsage,
   pointCounts,
   resetMargins
@@ -5446,8 +5480,14 @@ const setPlotSize = (u: uPlot, width: number, height: number): void => {
 // Hover functionality, i.e. a tooltip that lists the value of each of our visible traces at the X value that is under
 // the mouse pointer (like Plotly's 'x unified' hover mode), with a vertical guide line at that X value and the
 // corresponding points of our traces highlighted.
-// Note: a trace which X values are not sorted (e.g., a phase plot) doesn't have one value per X value, so we use its
-//       point that is closest to the mouse pointer instead (like Plotly's 'closest' hover mode).
+// Note #1: a trace which X values are not sorted (e.g., a phase plot) doesn't have one value per X value, so we use its
+//          point that is closest to the mouse pointer instead (like Plotly's 'closest' hover mode).
+// Note #2: we can also be hovered at a given X value (see hoverAt()), e.g. to link our hover to that of another plot, in
+//          which case we only show our guide line at that X value and the corresponding points of our traces which X
+//          values are sorted (since the point of a trace which X values are not sorted would also depend on a Y
+//          value). We don't show our hover tooltip then since it is meant to be next to the mouse pointer (and the
+//          plot that the mouse pointer hovers already shows its own). The mouse pointer takes precedence and only its
+//          hover gets emitted (see the hovered event), so that linked plots don't keep hovering each other.
 
 interface HoverPoint {
   seriesIndex: number;
@@ -5463,19 +5503,26 @@ interface HoverRow {
   color: string;
 }
 
-interface Hover {
+interface HoverTooltip {
   clientX: number;
   clientY: number;
-  guideX: number;
-  guideWidth: number;
-  points: HoverPoint[];
+  xValue: number; // Actual X value, which we emit (see the hovered event).
   x: string;
   rows: HoverRow[];
   otherRows: number;
 }
 
+interface Hover {
+  guideX: number;
+  guideWidth: number;
+  points: HoverPoint[];
+  tooltip: HoverTooltip | null; // Our hover tooltip, or null if we are hovered at an X value (see hoverAt()).
+}
+
 const hover = vue.shallowRef<Hover | null>(null);
 let hoverRafId: number | undefined;
+let hoveredAtX: number | null = null; // X value at which we are hovered (see hoverAt()), if any.
+let trackedHoveredX: number | null = null; // X value that we last emitted (see the hovered event).
 
 const formatHoverValue = (value: number): string => {
   // Like Plotly, format a value in our hover tooltip using the value itself as the tick spacing and adding four digits
@@ -5513,7 +5560,7 @@ const hoveredIndex = (
   xValues: Float64Array,
   yValues: Float64Array,
   left: number,
-  top: number,
+  top: number | null,
   radius: number,
   area: PathArea
 ): number => {
@@ -5552,6 +5599,13 @@ const hoveredIndex = (
       }
     }
 
+    return res;
+  }
+
+  // Make sure that we have a Y value, since the point of a trace which X values are not sorted depends on it (e.g., we
+  // don't have one when we are hovered at an X value, see hoverAt()).
+
+  if (top === null) {
     return res;
   }
 
@@ -5622,27 +5676,108 @@ const hoveredIndex = (
   return res;
 };
 
+const hoverGuide = (left: number): Pick<Hover, 'guideX' | 'guideWidth'> => {
+  // Return our guide line at the given position (in CSS pixels, from the left edge of our plotting area).
+  // Note: like our grid and zero lines (see linesPath()), our guide line is snapped to whole device pixels and is a
+  //       whole number of device pixels wide (see lineWidth()), so that it is crisp whatever our pixel ratio.
+
+  const pxRatio = uPlot.pxRatio;
+  const guideWidth = lineWidth(pxRatio);
+
+  return {
+    guideX: (Math.round(left * pxRatio) + 0.5 * (guideWidth % 2)) / pxRatio,
+    guideWidth: guideWidth / pxRatio
+  };
+};
+
+const hoveredAtXHover = (u: uPlot, cssArea: PathArea): Hover | null => {
+  // Make sure that we are hovered at an X value (see hoverAt()).
+
+  if (hoveredAtX === null) {
+    return null;
+  }
+
+  // Make sure that our X value is within our plotting area.
+  // Note: we negate our comparison so that an X value that we can't plot (e.g., a non-positive X value along a
+  //       logarithmic X axis, i.e. NaN) is not within our plotting area.
+
+  const xFactor = cssArea.width / (cssArea.xMax - cssArea.xMin);
+  const yFactor = cssArea.height / (cssArea.yMax - cssArea.yMin);
+  const left = (plotValue('x', hoveredAtX) - cssArea.xMin) * xFactor;
+
+  if (!(left >= 0 && left <= cssArea.width)) {
+    return null;
+  }
+
+  // Highlight the hovered point of each of our visible traces which X values are sorted (see hoveredIndex()), if any
+  // and if it is within our plotting area, in the order of our legend (like updateHover()).
+
+  const points: HoverPoint[] = [];
+
+  for (const legendItem of legendItems.value) {
+    const seriesIndex = legendItem.index + 1;
+    const [xValues, yValues] = seriesData(u, seriesIndex) ?? [];
+
+    if (!u.series[seriesIndex]?.show || !xValues || !yValues) {
+      continue;
+    }
+
+    const radius = seriesHasMarkers(u, seriesIndex) ? 0.5 * MARKER_SIZE : HOVER_LINE_RADIUS;
+    const index = hoveredIndex(seriesIndex - 1, xValues, yValues, left, null, radius, cssArea);
+
+    if (index === -1) {
+      continue;
+    }
+
+    const x = ((xValues[index] as number) - cssArea.xMin) * xFactor;
+    const y = cssArea.height - ((yValues[index] as number) - cssArea.yMin) * yFactor;
+
+    if (x >= 0 && x <= cssArea.width && y >= 0 && y <= cssArea.height) {
+      points.push({ seriesIndex, x, y, color: legendItem.color });
+    }
+  }
+
+  // Return our guide line at our X value and our hovered points, but no hover tooltip (see Note #2 of our hover
+  // functionality).
+
+  return {
+    ...hoverGuide(left),
+    points,
+    tooltip: null
+  };
+};
+
 const updateHover = (): void => {
-  // Make sure that we have a plot, that the mouse pointer is over our plotting area, and that we are not dragging.
+  // Make sure that we have a plot and that we are not dragging.
 
   const u = plot;
   const rect = plotRect.value;
   const mainDiv = mainDivRef.value;
-  const left = u?.cursor.left;
-  const top = u?.cursor.top;
   const area = u ? pathArea(u) : undefined;
 
-  if (!u || !rect || !mainDiv || !area || drag || left == null || top == null || left < 0 || top < 0) {
+  if (!u || !rect || !mainDiv || !area || drag) {
     hover.value = null;
+
+    return;
+  }
+
+  // Hover at the X value at which we are hovered (see hoverAt()), if any, if the mouse pointer is not over our plotting
+  // area.
+  // Note: we use our plotting area in CSS pixels (since the position of the mouse pointer is in CSS pixels).
+
+  const cssArea: PathArea = { ...area, ...rect, pxRatio: 1 };
+  const left = u.cursor.left;
+  const top = u.cursor.top;
+
+  if (left == null || top == null || left < 0 || top < 0) {
+    hover.value = hoveredAtXHover(u, cssArea);
 
     return;
   }
 
   // Determine the point of each of our visible traces that gets hovered, if any, and the X value of the one that is the
   // closest to the mouse pointer (horizontally), which is the X value that we show in our hover tooltip.
-  // Note: we use our plotting area in CSS pixels (since the position of the mouse pointer is in CSS pixels).
 
-  const cssArea: PathArea = { ...area, ...rect, pxRatio: 1 };
   const xFactor = cssArea.width / (cssArea.xMax - cssArea.xMin);
   const yFactor = cssArea.height / (cssArea.yMax - cssArea.yMin);
   const hoveredIndices = new Map<number, number>();
@@ -5715,26 +5850,25 @@ const updateHover = (): void => {
   }
 
   // Show our hover tooltip at the mouse pointer (in CSS pixels) and our guide line at our X value.
-  // Note: like our grid and zero lines (see linesPath()), our guide line is snapped to whole device pixels and is a
-  //       whole number of device pixels wide (see lineWidth()), so that it is crisp whatever our pixel ratio.
 
   const mainDivRect = mainDiv.getBoundingClientRect();
-  const pxRatio = uPlot.pxRatio;
-  const guideWidth = lineWidth(pxRatio);
+  const actualXValue = actualValue('x', xValue);
 
-  if (!hover.value) {
+  if (!hover.value?.tooltip) {
     updateOverlayThemeStyle();
   }
 
   hover.value = {
-    clientX: mainDivRect.left + rect.left + left,
-    clientY: mainDivRect.top + rect.top + top,
-    guideX: (Math.round((xValue - cssArea.xMin) * xFactor * pxRatio) + 0.5 * (guideWidth % 2)) / pxRatio,
-    guideWidth: guideWidth / pxRatio,
+    ...hoverGuide((xValue - cssArea.xMin) * xFactor),
     points,
-    x: formatHoverValue(actualValue('x', xValue)),
-    rows: rows.slice(0, HOVER_TOOLTIP_MAX_ROWS),
-    otherRows: Math.max(0, rows.length - HOVER_TOOLTIP_MAX_ROWS)
+    tooltip: {
+      clientX: mainDivRect.left + rect.left + left,
+      clientY: mainDivRect.top + rect.top + top,
+      xValue: actualXValue,
+      x: formatHoverValue(actualXValue),
+      rows: rows.slice(0, HOVER_TOOLTIP_MAX_ROWS),
+      otherRows: Math.max(0, rows.length - HOVER_TOOLTIP_MAX_ROWS)
+    }
   };
 
   // Position our hover tooltip once it has been rendered (since its position depends on its size).
@@ -5746,7 +5880,7 @@ const placeHoverTooltip = (): void => {
   // Make sure that our hover tooltip has been rendered and that we are still hovering.
 
   const tooltip = hoverTooltipRef.value;
-  const currentHover = hover.value;
+  const currentHover = hover.value?.tooltip;
 
   if (!tooltip || !currentHover) {
     return;
@@ -6083,7 +6217,7 @@ const createPlot = (width: number, height: number): void => {
             // may have changed (e.g., our data got updated or we zoomed in/out), i.e. our tooltip may have to change,
             // disappear, or appear (e.g., when a live trace reaches the mouse pointer).
 
-            if (hover.value || (u.cursor.left ?? -1) >= 0) {
+            if (hover.value || hoveredAtX !== null || (u.cursor.left ?? -1) >= 0) {
               queueHoverUpdate();
             }
           }
@@ -6360,6 +6494,22 @@ vue.watch(
     });
   }
 );
+
+// Emit the X value that the mouse pointer hovers whenever it changes (see the hovered event), but not the X value at
+// which we are hovered (see hoverAt()), so that linked plots don't keep hovering each other.
+// Note: our hover gets updated whenever our plot gets drawn (e.g., while a simulation is running), but we only emit the
+//       hovered X value if it has actually changed. Also, Vue calls us once for all the changes made to our hover in the
+//       same tick.
+
+vue.watch(hover, (newHover: Hover | null) => {
+  const x = newHover?.tooltip?.xValue ?? null;
+
+  if (x !== trackedHoveredX) {
+    trackedHoveredX = x;
+
+    emit('hovered', { x });
+  }
+});
 
 // Redraw our plot when we are to use our level of detail or not.
 
